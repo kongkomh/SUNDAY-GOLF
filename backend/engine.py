@@ -220,6 +220,24 @@ def get_wolf_rotation_for_hole(hole_num: int, players: List[Dict[str, Any]]) -> 
     }
 
 
+def get_raw_score_weight(raw_score: int, par: int, settings: Dict[str, Any]) -> int:
+    """
+    Returns the point weight of a raw score relative to par:
+    - Albatross (<= par - 3): albatross_point (default 4)
+    - Eagle (== par - 2): eagle_point (default 3)
+    - Birdie (== par - 1): birdie_point (default 2)
+    - Par or worse: 1
+    """
+    diff = raw_score - par
+    if diff <= -3:
+        return int(settings.get("albatross_point", 4) or 4)
+    elif diff == -2:
+        return int(settings.get("eagle_point", 3) or 3)
+    elif diff == -1:
+        return int(settings.get("birdie_point", 2) or 2)
+    return 1
+
+
 def calculate_hole_points(
     hole_num: int,
     hole_spec: Dict[str, Any],
@@ -233,7 +251,7 @@ def calculate_hole_points(
     """
     Calculates point outcome for a single hole between Team A and Team B.
     Follows pseudocode for hand matching, turbo multiplier, penetrate (chuan) bonus,
-    and zero-sum player distribution.
+    under-par raw tiebreakers, and zero-sum player distribution.
     """
     par = int(hole_spec.get("par", 4))
     is_turbo = bool(hole_spec.get("is_turbo", False))
@@ -243,10 +261,6 @@ def calculate_hole_points(
     penetrate_bonus = int(settings.get("penetrate_bonus", 1) or 1)
     game_mode = str(settings.get("game_mode", "NORMAL")).upper()
     setting_hand_count = int(settings.get("hand_count", 2) or 2)
-
-    birdie_pt = int(settings.get("birdie_point", 2) or 2)
-    eagle_pt = int(settings.get("eagle_point", 3) or 3)
-    albatross_pt = int(settings.get("albatross_point", 4) or 4)
 
     # Filter team_a_ids and team_b_ids strictly to valid players in players_dict
     valid_team_a_ids = [pid for pid in team_a_ids if pid in players_dict]
@@ -313,38 +327,41 @@ def calculate_hole_points(
         p_a = team_a_data[hand]
         p_b = team_b_data[hand]
 
-        # Lower score wins hand
+        raw_a = p_a["raw_score"]
+        raw_b = p_b["raw_score"]
+        w_a = get_raw_score_weight(raw_a, par, settings)
+        w_b = get_raw_score_weight(raw_b, par, settings)
+
+        # 1. Team A wins hand on Net Score
         if p_a["net_score"] < p_b["net_score"]:
             hand_won_count += 1
-            diff = p_a["raw_score"] - par
-            if diff <= -3:
-                pts = albatross_pt
-            elif diff == -2:
-                pts = eagle_pt
-            elif diff == -1:
-                pts = birdie_pt
-            else:
-                pts = 1
+            pts = w_a
             won_point += pts
             hand_details.append({"hand": hand + 1, "winner": "team_a", "points": pts, "p_a": p_a, "p_b": p_b})
 
+        # 2. Team B wins hand on Net Score
         elif p_b["net_score"] < p_a["net_score"]:
             hand_won_count -= 1
-            diff = p_b["raw_score"] - par
-            if diff <= -3:
-                pts = albatross_pt
-            elif diff == -2:
-                pts = eagle_pt
-            elif diff == -1:
-                pts = birdie_pt
-            else:
-                pts = 1
+            pts = w_b
             won_point -= pts
             hand_details.append({"hand": hand + 1, "winner": "team_b", "points": -pts, "p_a": p_a, "p_b": p_b})
 
+        # 3. Tied Net Score: Under-Par Raw Tiebreaker
         else:
-            # Tied hand
-            hand_details.append({"hand": hand + 1, "winner": "tie", "points": 0, "p_a": p_a, "p_b": p_b})
+            if raw_a != raw_b and min(raw_a, raw_b) < par:
+                if raw_a < raw_b:
+                    pts = w_a - w_b
+                    won_point += pts
+                    hand_won_count += 1
+                    hand_details.append({"hand": hand + 1, "winner": "team_a", "points": pts, "p_a": p_a, "p_b": p_b, "reason": "raw_underpar_bonus"})
+                else:
+                    pts = w_b - w_a
+                    won_point -= pts
+                    hand_won_count -= 1
+                    hand_details.append({"hand": hand + 1, "winner": "team_b", "points": -pts, "p_a": p_a, "p_b": p_b, "reason": "raw_underpar_bonus"})
+            else:
+                # Standard True Tie
+                hand_details.append({"hand": hand + 1, "winner": "tie", "points": 0, "p_a": p_a, "p_b": p_b})
 
     base_points = won_point
 

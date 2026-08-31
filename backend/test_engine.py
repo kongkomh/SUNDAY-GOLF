@@ -1,5 +1,5 @@
 """
-Unit tests for Sunday Golf Tracker Engine (Normal & Wolf Game Modes, TOR, Turbo, Chuan)
+Unit tests for Sunday Golf Tracker Engine (Normal & Wolf Game Modes, TOR, Turbo, Chuan, Under-Par Raw Tiebreaker)
 """
 
 import os
@@ -47,15 +47,6 @@ class TestSundayGolfEngine(unittest.TestCase):
         ]
 
     def test_handicap_allocation_rules(self):
-        # Player 1 has hcp_out=2, hcp_in=1
-        # Front 9 candidate non-Par 3 holes (non-turbo when turbo_handicap=False):
-        # Holes: H1 (7), H2 (11), H4 (3), H5 (1), H6 (9), H8 (5)
-        # Sorted by handicap: H5 (1), H4 (3), H8 (5), H1 (7), H6 (9), H2 (11)
-        # Top 2 are H5 and H4.
-        # Back 9 candidate non-Par 3 holes:
-        # Holes: H10 (8), H11 (4), H13 (2), H14 (10), H15 (12), H17 (6)
-        # Sorted by handicap: H13 (2), H11 (4), H17 (6)...
-        # Top 1 is H13.
         hcp_holes = allocate_player_handicap_holes(self.players[0], self.holes, turbo_handicap=False)
         self.assertIn(5, hcp_holes)
         self.assertIn(4, hcp_holes)
@@ -64,19 +55,6 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertNotIn(9, hcp_holes) # Turbo hole skipped when turbo_handicap is False
 
     def test_normal_mode_2v2_scoring(self):
-        # 2v2 Match: Team A = [p1, p2], Team B = [p3, p4]
-        # Hole 1: Par 4
-        # p1 has raw score 4 (Par) -> Net 4 (no handicap on H1)
-        # p2 has raw score 4 (Par) -> Net 4
-        # p3 has raw score 5 (Bogey) -> Net 5
-        # p4 has raw score 5 (Bogey) -> Net 5
-        # Hand count = 2
-        # Hand 1: p1 (4) vs p3 (5) -> Team A wins (+1 pt)
-        # Hand 2: p2 (4) vs p4 (5) -> Team A wins (+1 pt)
-        # Base won_point = +2
-        # Penetrate (Chuan) is disabled by default
-        # Payout: Team A (2 players) receives +2 * (2/2) = +2 each.
-        # Team B (2 players) loses -2 each.
         game_data = {
             "tournament_name": "Test Sunday Game",
             "game_settings": {
@@ -112,8 +90,6 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertEqual(p4["total_cash"], -200.0)
 
     def test_penetrate_chuan_bonus(self):
-        # Enable Penetrate (Chuan) with bonus = 1
-        # Team A wins all 2 hands -> base 2 pts + 1 penetrate bonus = 3 pts
         game_data = {
             "game_settings": {
                 "game_mode": "NORMAL",
@@ -142,9 +118,6 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertEqual(p3["total_cash"], -300.0)
 
     def test_turbo_multiplier(self):
-        # Hole 9 is Turbo
-        # Team A wins 1 point on turbo hole with multiplier = 3
-        # Total won points = 1 * 3 = 3 pts
         game_data = {
             "game_settings": {
                 "game_mode": "NORMAL",
@@ -170,15 +143,6 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertEqual(p3["total_points"], -3.0)
 
     def test_wolf_lone_wolf_scoring(self):
-        # Hole 1: Wolf is Player 1 (p1). Lone wolf scenario: Team A = [p1], Team B = [p2, p3, p4]
-        # p1 shoots 3 (Birdie on Par 4, birdie_point=2)
-        # Sheep shoot 4, 5, 5
-        # hand_count = 1
-        # Hand 1: p1 (3) vs p2 (4) -> p1 wins with Birdie (+2 pts)
-        # Payout:
-        # Each sheep loses 2 pts (-200 cash)
-        # Lone wolf gains 2 * 3 = +6 pts (+600 cash)
-        # Zero-sum total: +600 - 200 - 200 - 200 = 0!
         game_data = {
             "game_settings": {
                 "game_mode": "WOLF",
@@ -210,6 +174,91 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertEqual(p3["total_cash"], -200.0)
         self.assertEqual(p4["total_points"], -2.0)
         self.assertEqual(p4["total_cash"], -200.0)
+
+    def test_underpar_raw_tiebreaker_case1(self):
+        # Case 1: Hole 5 (Par 4). Player p1 has handicap on H5 -> raw 4 (Par) nets to 3.
+        # Player p2 has no handicap -> raw 3 (Birdie) nets to 3.
+        # Net scores tied (3 == 3), but p2 has raw Birdie (weight 2) vs p1 raw Par (weight 1).
+        # Team B (p2) wins 2 - 1 = 1 point!
+        h_match = calculate_hole_points(
+            hole_num=5,
+            hole_spec={"hole": 5, "par": 4, "handicap": 1, "is_turbo": False},
+            team_a_ids=["p1"],
+            team_b_ids=["p2"],
+            player_scores={"p1": 4, "p2": 3},
+            player_handicap_map={"p1": {5}, "p2": set()},
+            settings={"game_mode": "NORMAL", "hand_count": 1, "birdie_point": 2, "turbo": False, "penetrate": False},
+            players_dict={p["id"]: p for p in self.players}
+        )
+        self.assertEqual(h_match["won_point"], -1) # Team B won 1 point
+        self.assertEqual(h_match["hand_details"][0]["winner"], "team_b")
+        self.assertEqual(h_match["hand_details"][0]["points"], -1)
+
+    def test_underpar_raw_tiebreaker_case2(self):
+        # Case 2: Hole 5 (Par 4). Player p1 (handicap) raw 3 (Birdie) -> Net 2.
+        # Player p2 (no handicap) raw 2 (Eagle) -> Net 2.
+        # Net scores tied (2 == 2). p2 has Eagle (weight 3) vs p1 Birdie (weight 2).
+        # Team B wins 3 - 2 = 1 point!
+        h_match = calculate_hole_points(
+            hole_num=5,
+            hole_spec={"hole": 5, "par": 4, "handicap": 1, "is_turbo": False},
+            team_a_ids=["p1"],
+            team_b_ids=["p2"],
+            player_scores={"p1": 3, "p2": 2},
+            player_handicap_map={"p1": {5}, "p2": set()},
+            settings={"game_mode": "NORMAL", "hand_count": 1, "birdie_point": 2, "eagle_point": 3, "turbo": False, "penetrate": False},
+            players_dict={p["id"]: p for p in self.players}
+        )
+        self.assertEqual(h_match["won_point"], -1) # Team B won 1 point
+
+    def test_underpar_raw_tiebreaker_case3(self):
+        # Case 3: Hole 5 (Par 4). Player p1 (handicap) raw 3 (Birdie) -> Net 2.
+        # Player p2 (no handicap) raw 4 (Par) -> Net 4.
+        # Net score win for Team A (2 < 4). Winner p1 has raw Birdie -> 2 points.
+        h_match = calculate_hole_points(
+            hole_num=5,
+            hole_spec={"hole": 5, "par": 4, "handicap": 1, "is_turbo": False},
+            team_a_ids=["p1"],
+            team_b_ids=["p2"],
+            player_scores={"p1": 3, "p2": 4},
+            player_handicap_map={"p1": {5}, "p2": set()},
+            settings={"game_mode": "NORMAL", "hand_count": 1, "birdie_point": 2, "turbo": False, "penetrate": False},
+            players_dict={p["id"]: p for p in self.players}
+        )
+        self.assertEqual(h_match["won_point"], 2) # Team A won 2 points
+
+    def test_underpar_raw_tiebreaker_case4(self):
+        # Case 4: Hole 5 (Par 4). Player p1 (handicap) raw 5 (Bogey) -> Net 4.
+        # Player p2 (no handicap) raw 4 (Par) -> Net 4.
+        # Net scores tied (4 == 4), but neither is under par (min(5, 4) < 4 is False).
+        # Result: 0 points (Tied).
+        h_match = calculate_hole_points(
+            hole_num=5,
+            hole_spec={"hole": 5, "par": 4, "handicap": 1, "is_turbo": False},
+            team_a_ids=["p1"],
+            team_b_ids=["p2"],
+            player_scores={"p1": 5, "p2": 4},
+            player_handicap_map={"p1": {5}, "p2": set()},
+            settings={"game_mode": "NORMAL", "hand_count": 1, "turbo": False, "penetrate": False},
+            players_dict={p["id"]: p for p in self.players}
+        )
+        self.assertEqual(h_match["won_point"], 0) # Tied hand
+
+    def test_underpar_raw_tiebreaker_case5(self):
+        # Case 5: Hole 5 (Par 4). Player p1 (handicap) raw 4 (Par) -> Net 3.
+        # Player p2 (no handicap) raw 4 (Par) -> Net 4.
+        # Outright Net Win for Team A (3 < 4). Winner p1 has raw Par -> 1 point.
+        h_match = calculate_hole_points(
+            hole_num=5,
+            hole_spec={"hole": 5, "par": 4, "handicap": 1, "is_turbo": False},
+            team_a_ids=["p1"],
+            team_b_ids=["p2"],
+            player_scores={"p1": 4, "p2": 4},
+            player_handicap_map={"p1": {5}, "p2": set()},
+            settings={"game_mode": "NORMAL", "hand_count": 1, "turbo": False, "penetrate": False},
+            players_dict={p["id"]: p for p in self.players}
+        )
+        self.assertEqual(h_match["won_point"], 1) # Team A won 1 point
 
 if __name__ == "__main__":
     unittest.main()
