@@ -131,6 +131,19 @@ def test_api():
             assert "Sunday Golf" in content
             print("✅ GET / static HTML served successfully.", flush=True)
 
+        # 7. Test HEAD / and HEAD /api/tournament (UptimeRobot / Health Check support)
+        head_req = urllib.request.Request(index_url, method="HEAD")
+        with urllib.request.urlopen(head_req, timeout=4) as resp:
+            assert resp.getcode() == 200
+            assert resp.headers.get("Content-Type") == "text/html"
+            print("✅ HEAD / passed (200 OK, headers only).", flush=True)
+
+        head_api_req = urllib.request.Request(f"http://localhost:{port}/api/tournament", method="HEAD")
+        with urllib.request.urlopen(head_api_req, timeout=4) as resp:
+            assert resp.getcode() == 200
+            assert resp.headers.get("Content-Type") == "application/json"
+            print("✅ HEAD /api/tournament passed (200 OK, headers only).", flush=True)
+
         print("\n🎉 ALL E2E API AND INTEGRATION TESTS PASSED PERFECTLY!", flush=True)
 
     finally:

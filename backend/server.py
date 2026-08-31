@@ -314,13 +314,67 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_cors_headers()
         self.end_headers()
+
+    def _get_content_type(self, filepath: str) -> str:
+        if filepath.endswith(".html"):
+            return "text/html"
+        elif filepath.endswith(".js"):
+            return "application/javascript"
+        elif filepath.endswith(".css"):
+            return "text/css"
+        elif filepath.endswith(".json"):
+            return "application/json"
+        elif filepath.endswith(".png"):
+            return "image/png"
+        elif filepath.endswith(".jpg") or filepath.endswith(".jpeg"):
+            return "image/jpeg"
+        elif filepath.endswith(".svg"):
+            return "image/svg+xml"
+        elif filepath.endswith(".webp"):
+            return "image/webp"
+        return "text/plain"
+
+    def do_HEAD(self):
+        """
+        Respond to HEAD requests (e.g. UptimeRobot, health checks) with headers only.
+        Prevents HTTP 501 Not Implemented errors.
+        """
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path.startswith("/api/"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_cors_headers()
+            self.end_headers()
+            return
+
+        if path == "/" or path == "":
+            filepath = os.path.join(FRONTEND_DIR, "index.html")
+        else:
+            rel_path = path.lstrip("/")
+            filepath = os.path.join(FRONTEND_DIR, rel_path)
+
+        if not (os.path.exists(filepath) and os.path.isfile(filepath)):
+            filepath = os.path.join(FRONTEND_DIR, "index.html")
+
+        if os.path.exists(filepath) and os.path.isfile(filepath):
+            content_type = self._get_content_type(filepath)
+            file_size = os.path.getsize(filepath)
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(file_size))
+            self.send_cors_headers()
+            self.end_headers()
+        else:
+            self.send_error(404, "File Not Found")
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -447,23 +501,7 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             pass
 
     def serve_file(self, filepath: str):
-        content_type = "text/plain"
-        if filepath.endswith(".html"):
-            content_type = "text/html"
-        elif filepath.endswith(".js"):
-            content_type = "application/javascript"
-        elif filepath.endswith(".css"):
-            content_type = "text/css"
-        elif filepath.endswith(".json"):
-            content_type = "application/json"
-        elif filepath.endswith(".png"):
-            content_type = "image/png"
-        elif filepath.endswith(".jpg") or filepath.endswith(".jpeg"):
-            content_type = "image/jpeg"
-        elif filepath.endswith(".svg"):
-            content_type = "image/svg+xml"
-        elif filepath.endswith(".webp"):
-            content_type = "image/webp"
+        content_type = self._get_content_type(filepath)
 
         with open(filepath, "rb") as f:
             content = f.read()
