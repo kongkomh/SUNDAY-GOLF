@@ -1,0 +1,210 @@
+/* Sunday Golf Tracker - Styles & Mobile Optimizations */
+
+/* Custom Smooth Scrollbar */
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.8);
+  border-radius: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.9);
+  border-radius: 4px;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Touch Input & Drag-and-Drop */
+.draggable-player-card {
+  touch-action: pan-y;
+  user-select: none;
+  cursor: grab;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.draggable-player-card:active {
+  cursor: grabbing;
+}
+.draggable-player-card.is-dragging {
+  opacity: 0.4;
+  transform: scale(0.96);
+}
+
+.team-dropzone {
+  min-height: 180px;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+.team-dropzone.drag-over {
+  background-color: rgba(245, 158, 11, 0.12) !important;
+  border-color: #f59e0b !important;
+}
+
+/* Vertical Score Dial / Stepper */
+.vertical-score-dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.dial-btn {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.12s ease-in-out;
+}
+.dial-btn:active {
+  transform: scale(0.88);
+}
+
+/* Standard Golf Scorecard Shapes */
+.golf-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  margin: 0 auto;
+}
+
+.golf-birdie {
+  border: 1.5px solid #ef4444;
+  border-radius: 9999px;
+  color: #f87171;
+  background-color: rgba(239, 68, 68, 0.15);
+}
+
+.golf-eagle {
+  border: 1.5px solid #ef4444;
+  box-shadow: 0 0 0 1.5px #ef4444;
+  border-radius: 9999px;
+  color: #fca5a5;
+  background-color: rgba(239, 68, 68, 0.25);
+}
+
+.golf-par {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.golf-bogey {
+  border: 1.5px solid #3b82f6;
+  border-radius: 2px;
+  color: #93c5fd;
+  background-color: rgba(59, 130, 246, 0.15);
+}
+
+.golf-double-bogey {
+  border: 1.5px solid #3b82f6;
+  box-shadow: 0 0 0 1.5px #3b82f6;
+  border-radius: 2px;
+  color: #bfdbfe;
+  background-color: rgba(59, 130, 246, 0.25);
+}
+
+/* Scorecard Table */
+#scorecard-scroll-container {
+  cursor: grab;
+  cursor: -webkit-grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-x pan-y;
+  scrollbar-width: thin;
+}
+
+#scorecard-scroll-container.is-dragging {
+  cursor: grabbing !important;
+  cursor: -webkit-grabbing !important;
+  user-select: none !important;
+}
+
+#full-scorecard-table th, 
+#full-scorecard-table td {
+  padding: 7px 4px;
+  border: 1px solid #1e293b;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+#full-scorecard-table th {
+  background-color: #0f172a;
+  font-weight: 800;
+  color: #94a3b8;
+}
+
+/* Safe area insets for mobile phones */
+.mobile-bottom-nav {
+  padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
+}
+
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  body {
+    padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* Cash Colors */
+.cash-positive {
+  color: #10b981;
+  font-weight: 900;
+}
+
+.cash-negative {
+  color: #ef4444;
+  font-weight: 900;
+}
+
+.cash-neutral {
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+/* Angel Wing & Turbo Badges */
+.angel-wing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(99, 102, 241, 0.2) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  color: #7dd3fc;
+  font-weight: 800;
+  border-radius: 9999px;
+  padding: 2px 8px;
+}
+
+.turbo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.25) 0%, rgba(245, 158, 11, 0.25) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.6);
+  color: #fbbf24;
+  font-weight: 900;
+  border-radius: 9999px;
+  padding: 2px 8px;
+  animation: pulseTurbo 2s infinite;
+}
+
+@keyframes pulseTurbo {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 10px 2px rgba(245, 158, 11, 0.3);
+  }
+}

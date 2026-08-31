@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sunday Golf Tracker - Casual Golf & Wolf Game</title>
+  <meta name="description" content="Real-time Sunday Golf Tracker for 3-6 players with Normal & Wolf game modes, handicap (TOR) system, turbo multipliers, and cash tracking.">
+  <meta name="theme-color" content="#0F172A">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="SundayGolf">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              dark: '#0B1120',
+              card: '#0F172A',
+              border: '#1E293B',
+              gold: '#F59E0B',
+              green: '#10B981',
+              red: '#EF4444'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js for Momentum Visualization -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased select-none pb-20">
+
+  <!-- Top Sticky Header -->
+  <header class="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-4 py-2 space-y-1.5 shadow-lg">
+    <div class="max-w-5xl mx-auto space-y-1.5">
+      
+      <!-- Top Row: Tournament Title & Live Leader Pill -->
+      <div class="flex items-center justify-between gap-2">
+        
+        <!-- Game Title & Course -->
+        <div class="flex items-center space-x-2.5 min-w-0">
+          <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-br from-amber-500 via-amber-600 to-yellow-700 flex items-center justify-center shadow-md shadow-amber-500/20 text-slate-950 font-black text-base sm:text-lg shrink-0">
+            ⛳
+          </div>
+          <div class="min-w-0">
+            <h1 id="header-tournament-name" class="font-black text-xs sm:text-base tracking-tight leading-tight text-white flex items-center gap-1.5 truncate">
+              <span class="truncate">Sunday Golf Match</span>
+              <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">NORMAL</span>
+            </h1>
+            <p id="header-course-name" class="text-[11px] text-slate-400 font-medium truncate max-w-xs sm:max-w-sm">Krungthep Kreetha Golf Course</p>
+          </div>
+        </div>
+
+        <!-- Live Top Earner Pill & SSE Live Stream Indicator -->
+        <div class="flex items-center space-x-2 shrink-0">
+          <div id="header-leader-pill" class="flex items-center bg-slate-950/90 border border-slate-800 hover:border-amber-500/60 rounded-2xl px-2.5 sm:px-3 py-1 shadow-inner cursor-pointer transition max-w-[170px] sm:max-w-[240px]" onclick="switchTab('leaderboard')" title="Click to view leaderboard">
+            <div id="header-leader-content" class="w-full flex flex-col justify-center min-w-0">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- SSE Live Indicator -->
+          <div id="live-indicator" class="hidden sm:flex items-center space-x-1.5 px-2 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" title="Real-time sync active">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>LIVE</span>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="flex-1 max-w-5xl w-full mx-auto p-3 sm:p-5 space-y-4 pb-24 sm:pb-8">
+
+    <!-- Desktop Navigation Tabs -->
+    <nav class="hidden sm:flex items-center bg-slate-900/80 p-1 rounded-2xl border border-slate-800 text-xs sm:text-sm font-bold shadow-md">
+      <button onclick="switchTab('play')" id="tab-btn-play" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 bg-amber-500 text-slate-950 shadow-md font-black">
+        <i data-lucide="crosshair" class="w-4 h-4"></i>
+        <span>Live Scoring</span>
+      </button>
+      <button onclick="switchTab('scorecard')" id="tab-btn-scorecard" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
+        <i data-lucide="grid" class="w-4 h-4"></i>
+        <span>Scorecard</span>
+      </button>
+      <button onclick="switchTab('momentum')" id="tab-btn-momentum" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
+        <i data-lucide="trending-up" class="w-4 h-4"></i>
+        <span>Cash Momentum</span>
+      </button>
+      <button onclick="switchTab('leaderboard')" id="tab-btn-leaderboard" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
+        <i data-lucide="trophy" class="w-4 h-4 text-amber-400"></i>
+        <span class="text-amber-300 font-extrabold">Leaderboard</span>
+      </button>
+      <button onclick="switchTab('settings')" id="tab-btn-settings" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
+        <i data-lucide="settings" class="w-4 h-4"></i>
+        <span>Game Settings</span>
+      </button>
+    </nav>
+
+    <!-- ================= TAB 1: LIVE SCORING (TEAM A VS TEAM B / WOLF VS SHEEP) ================= -->
+    <section id="tab-play" class="space-y-3.5 tab-content">
+      
+      <!-- 18-Hole Carousel Slider -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between px-1 flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <i data-lucide="flag" class="w-4 h-4 text-amber-400 shrink-0"></i>
+            <span id="carousel-active-hole-title" class="text-white font-black text-xs sm:text-sm uppercase tracking-tight">HOLE 1</span>
+          </div>
+
+          <!-- Hole Par & Handicap Info Badge -->
+          <span id="carousel-active-hole-info" class="px-2.5 py-1 rounded-xl text-xs font-black bg-slate-900 border border-slate-800 text-amber-300">
+            Par 4 • HCP 7
+          </span>
+        </div>
+
+        <div id="hole-carousel" class="flex gap-2 overflow-x-auto pb-1 pt-1 scrollbar-thin no-scrollbar">
+          <!-- Dynamically populated 18 hole buttons -->
+        </div>
+      </div>
+
+      <!-- Hole Status Banner: Turbo, Angel Wings (TOR), and Wolf Indicator -->
+      <div id="hole-status-banner" class="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between flex-wrap gap-2.5 shadow-md">
+        <!-- Dynamically rendered -->
+      </div>
+
+      <!-- Instruction Hint -->
+      <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 font-medium">
+        <span class="flex items-center gap-1">
+          <i data-lucide="move-horizontal" class="w-3.5 h-3.5 text-amber-400"></i>
+          <span>Drag or tap player cards to assign teams</span>
+        </span>
+        <span id="hand-count-info-badge" class="text-amber-400 font-bold">Best 2 Balls</span>
+      </div>
+
+      <!-- Split Left / Right Team Boxes (Mobile Responsive Side-by-Side) -->
+      <div class="grid grid-cols-2 gap-2 sm:gap-4">
+        
+        <!-- Team A (Left) / WOLF -->
+        <div id="team-a-container" class="p-2 sm:p-3 rounded-2xl bg-slate-900/90 border-2 border-amber-500/40 flex flex-col space-y-2.5 team-dropzone shadow-lg" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'team_a')">
+          
+          <div class="flex items-center justify-between pb-1.5 border-b border-slate-800">
+            <div id="team-a-title" class="font-black text-xs sm:text-sm text-amber-400 flex items-center gap-1.5 truncate">
+              <span>Team A</span>
+            </div>
+            <span id="team-a-count" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">0</span>
+          </div>
+
+          <div id="team-a-players-list" class="flex-1 space-y-2">
+            <!-- Dynamically populated player cards -->
+          </div>
+        </div>
+
+        <!-- Team B (Right) / SHEEP -->
+        <div id="team-b-container" class="p-2 sm:p-3 rounded-2xl bg-slate-900/90 border-2 border-sky-500/40 flex flex-col space-y-2.5 team-dropzone shadow-lg" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'team_b')">
+          
+          <div class="flex items-center justify-between pb-1.5 border-b border-slate-800">
+            <div id="team-b-title" class="font-black text-xs sm:text-sm text-sky-400 flex items-center gap-1.5 truncate">
+              <span>Team B</span>
+            </div>
+            <span id="team-b-count" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">0</span>
+          </div>
+
+          <div id="team-b-players-list" class="flex-1 space-y-2">
+            <!-- Dynamically populated player cards -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Action Buttons (Save / Clear / Unlock) -->
+      <div id="scoring-action-container" class="flex items-center gap-3 pt-1">
+        <!-- Rendered dynamically -->
+      </div>
+
+    </section>
+
+    <!-- ================= TAB 2: SCORECARD TABLE ================= -->
+    <section id="tab-scorecard" class="space-y-4 tab-content hidden">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-4 shadow-xl">
+        
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-base font-extrabold text-white flex items-center gap-2">
+              <i data-lucide="grid" class="w-4 h-4 text-emerald-400"></i> Full 18-Hole Gross Scorecard
+            </h3>
+            <p class="text-xs text-slate-400">Raw scores for all players with Front-9 (OUT) and Back-9 (IN) totals</p>
+          </div>
+          <button onclick="window.print()" class="p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold flex items-center gap-1">
+            <i data-lucide="printer" class="w-3.5 h-3.5"></i> Print
+          </button>
+        </div>
+
+        <div id="scorecard-scroll-container" class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/90 scrollbar-thin select-none">
+          <table id="full-scorecard-table" class="w-full text-xs text-center border-collapse select-none">
+            <!-- Dynamically populated -->
+          </table>
+        </div>
+
+        <!-- Symbols Legend -->
+        <div class="mt-3.5 p-3 rounded-2xl bg-slate-950/90 border border-slate-800 flex items-center justify-between flex-wrap gap-3 text-xs">
+          <span class="text-[11px] font-black uppercase tracking-wider text-slate-400">Golf Score Symbols:</span>
+          <div class="flex items-center gap-3.5 flex-wrap text-xs">
+            <span class="flex items-center gap-1.5"><span class="golf-badge golf-eagle">3</span> <span class="text-slate-300 font-medium">Eagle (-2+)</span></span>
+            <span class="flex items-center gap-1.5"><span class="golf-badge golf-birdie">3</span> <span class="text-slate-300 font-medium">Birdie (-1)</span></span>
+            <span class="flex items-center gap-1.5"><span class="golf-badge golf-par">4</span> <span class="text-slate-300 font-medium">Par (E)</span></span>
+            <span class="flex items-center gap-1.5"><span class="golf-badge golf-bogey">5</span> <span class="text-slate-300 font-medium">Bogey (+1)</span></span>
+            <span class="flex items-center gap-1.5"><span class="golf-badge golf-double-bogey">6</span> <span class="text-slate-300 font-medium">Double Bogey+ (+2+)</span></span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= TAB 3: MOMENTUM CHART ================= -->
+    <section id="tab-momentum" class="space-y-4 tab-content hidden">
+      
+      <!-- Top Overview Summary Cards -->
+      <div id="momentum-summary-cards" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs text-center">
+        <!-- Dynamically populated -->
+      </div>
+
+      <!-- 18-Hole Cash Progression Chart -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl space-y-3">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 class="text-sm sm:text-base font-extrabold text-white flex items-center gap-2">
+              <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
+              <span>18-Hole Cash Won / Lost Progression</span>
+            </h3>
+            <p class="text-[11px] text-slate-400">Cumulative money tracking from Hole 0 to Hole 18 in player color codes.</p>
+          </div>
+          <div class="text-[11px] font-bold text-slate-400 flex items-center gap-1">
+            <span>Currency:</span>
+            <span id="momentum-currency-label" class="text-amber-400 font-black">THB (฿)</span>
+          </div>
+        </div>
+
+        <div class="h-80 sm:h-96 w-full relative">
+          <canvas id="momentum-chart-all"></canvas>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================= TAB 4: LEADERBOARD ================= -->
+    <section id="tab-leaderboard" class="space-y-4 tab-content hidden">
+      
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
+        
+        <!-- Header Banner -->
+        <div class="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 px-4 py-4 sm:px-6 border-b border-slate-800 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 flex items-center justify-center text-slate-950 text-xl sm:text-2xl shadow-lg shadow-amber-500/20 font-black shrink-0">
+              🏆
+            </div>
+            <div>
+              <h2 id="lb-title" class="font-black text-sm sm:text-lg text-amber-400 tracking-wide uppercase">SUNDAY GOLF LEADERBOARD</h2>
+              <div class="text-[11px] text-slate-400 font-semibold flex items-center gap-2">
+                <span id="lb-mode-txt">NORMAL MATCH</span>
+                <span>•</span>
+                <span id="lb-course-txt" class="text-white">Krungthep Kreetha</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-right">
+            <span id="lb-cash-pot-badge" class="px-2.5 py-1 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Cash Match
+            </span>
+          </div>
+        </div>
+
+        <!-- Table Column Headers -->
+        <div class="grid grid-cols-12 text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-400 py-2.5 px-3 bg-slate-950/80 border-b border-slate-800">
+          <div class="col-span-1 text-center font-mono">POS</div>
+          <div class="col-span-4 pl-2">PLAYER</div>
+          <div class="col-span-2 text-center">TO PAR</div>
+          <div class="col-span-2 text-center">GROSS</div>
+          <div class="col-span-3 text-right pr-2">CASH (WON/LOST)</div>
+        </div>
+
+        <!-- Dynamic Rows -->
+        <div id="leaderboard-rows" class="divide-y divide-slate-800/60 font-medium">
+          <!-- Dynamically populated -->
+        </div>
+
+        <!-- Footer Progress -->
+        <div class="bg-slate-950/90 px-4 py-2.5 sm:px-6 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <span id="lb-progress-txt" class="font-bold text-emerald-400">0 of 18 holes played</span>
+          <span class="text-[11px] text-slate-500">Zero-Sum Match Betting</span>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ================= TAB 5: GAME SETTINGS & COURSE ================= -->
+    <section id="tab-settings" class="space-y-5 tab-content hidden">
+      
+      <!-- 1. Expandable Player Lineup Section Button & Box -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl transition-all">
+        
+        <!-- Expandable Header Button -->
+        <button type="button" onclick="togglePlayerLineupAccordion()" id="btn-toggle-lineup" class="w-full p-4 sm:p-5 flex items-center justify-between gap-3 text-left hover:bg-slate-800/50 transition cursor-pointer group">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 group-hover:bg-amber-500/20 transition">
+              <i data-lucide="users" class="w-5 h-5"></i>
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <h3 class="text-sm sm:text-base font-extrabold text-white group-hover:text-amber-300 transition">Player Lineup (3–6 Players)</h3>
+                <span id="lineup-count-pill" class="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-800 text-amber-300 border border-slate-700">4 Players</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5 truncate">Tap to expand and configure names, colors, and Handicap (TOR) OUT/IN</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="p-2 rounded-xl bg-slate-800/80 text-slate-400 group-hover:text-white transition">
+              <i id="lineup-chevron-icon" data-lucide="chevron-down" class="w-4 h-4 transition-transform duration-300"></i>
+            </span>
+          </div>
+        </button>
+
+        <!-- Collapsible Content Container (Initially Expanded or Collapsed) -->
+        <div id="lineup-collapsible-body" class="hidden px-4 pb-5 sm:px-5 sm:pb-6 space-y-4 border-t border-slate-800/80 pt-4 bg-slate-950/40">
+          
+          <div class="flex items-center justify-between flex-wrap gap-2 p-3 rounded-2xl bg-slate-950/80 border border-amber-500/30">
+            <div>
+              <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Number of Players (3–6)</label>
+              <span class="text-[11px] text-slate-400">Card inputs will adjust automatically</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <input id="cfg-player-count" type="number" min="3" max="6" value="4" onchange="onPlayerCountChanged(this.value)" class="w-16 bg-slate-900 border-2 border-amber-500 rounded-xl px-2 py-1.5 text-center font-black text-white text-base focus:ring-2 focus:ring-amber-400">
+            </div>
+          </div>
+
+          <!-- Dynamic Player Cards Container -->
+          <div id="player-lineup-container" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <!-- Dynamically populated player cards -->
+          </div>
+
+          <div class="flex justify-end pt-1">
+            <button onclick="savePlayersLineup()" class="py-2.5 px-5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 flex items-center gap-1.5">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Save Players Lineup</span>
+            </button>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- 2. Game Settings (Normal / Wolf, Hand Count, Cash, Turbo, Chuan) -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl space-y-4">
+        
+        <h3 class="text-sm sm:text-base font-extrabold text-white flex items-center gap-2 pb-2 border-b border-slate-800">
+          <i data-lucide="sliders" class="w-4 h-4 text-amber-400"></i>
+          <span>Game Rules & Match Settings</span>
+        </h3>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+          
+          <!-- Game Mode Selector -->
+          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Game Mode</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button type="button" onclick="setGameMode('NORMAL')" id="btn-mode-normal" class="py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-amber-500 text-slate-950 border-amber-400 shadow-md">
+                <span>NORMAL</span>
+              </button>
+              <button type="button" onclick="setGameMode('WOLF')" id="btn-mode-wolf" class="py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-slate-900 text-slate-400 border-slate-700 hover:text-white">
+                <span>🐺 WOLF</span>
+              </button>
+            </div>
+            <p id="mode-help-text" class="text-[11px] text-slate-400">
+              In Normal mode, teams can be freely assigned or copied from hole to hole.
+            </p>
+          </div>
+
+          <!-- Best X Balls (Hand Count) -->
+          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Best ... Balls (Hands Count)</label>
+            <div class="flex items-center gap-2">
+              <input id="cfg-hand-count" type="number" min="1" max="6" value="2" class="w-20 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-center font-black text-white text-sm focus:ring-1 focus:ring-amber-500">
+              <span class="text-[11px] text-slate-400">Number of top hands compared between teams (default 2)</span>
+            </div>
+          </div>
+
+          <!-- Cash per Hole & Currency -->
+          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Cash Per Point / Hole</label>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="cfg-cash-per-point" type="number" min="1" value="100" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-center font-black text-white text-sm">
+              <select id="cfg-currency" onchange="onCurrencyChanged(this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-white font-bold text-xs">
+                <option value="THB" selected>Thai Baht (฿)</option>
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+                <option value="JPY">JPY (¥)</option>
+                <option value="SGD">SGD (S$)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Turbo Option & Multiplier -->
+          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 text-xs font-black text-amber-400 uppercase cursor-pointer">
+                <input id="cfg-turbo-enabled" type="checkbox" checked onchange="onTurboToggled(this.checked)" class="w-4 h-4 text-amber-500 rounded border-slate-700 bg-slate-900 focus:ring-0">
+                <span>Turbo Holes</span>
+              </label>
+              <button type="button" onclick="openInfoModal('turbo')" class="text-slate-400 hover:text-amber-400 p-1" title="Info">
+                <i data-lucide="info" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div id="turbo-multiplier-wrap" class="flex items-center gap-2">
+              <span class="text-[11px] text-slate-300 font-bold">Multiplier:</span>
+              <input id="cfg-turbo-multiplier" type="number" min="2" max="10" value="2" class="w-16 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1 text-center font-black text-white text-xs">
+            </div>
+          </div>
+
+          <!-- Turbo Handicap Option -->
+          <div id="turbo-handicap-box" class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 text-xs font-black text-slate-300 uppercase cursor-pointer">
+                <input id="cfg-turbo-handicap" type="checkbox" class="w-4 h-4 text-amber-500 rounded border-slate-700 bg-slate-900 focus:ring-0">
+                <span id="label-turbo-handicap">Turbo Handicap</span>
+              </label>
+              <button type="button" onclick="openInfoModal('turbo_handicap')" class="text-slate-400 hover:text-amber-400 p-1" title="Info">
+                <i data-lucide="info" class="w-4 h-4"></i>
+              </button>
+            </div>
+            <p class="text-[10px] text-slate-500 leading-tight">If checked, handicap strokes OUT and IN can apply to turbo holes.</p>
+          </div>
+
+          <!-- Penetrate (Chuan) Option & Bonus -->
+          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 text-xs font-black text-amber-400 uppercase cursor-pointer">
+                <input id="cfg-penetrate-enabled" type="checkbox" checked onchange="onPenetrateToggled(this.checked)" class="w-4 h-4 text-amber-500 rounded border-slate-700 bg-slate-900 focus:ring-0">
+                <span id="label-penetrate-title">Penetrate</span>
+              </label>
+              <button type="button" onclick="openInfoModal('penetrate')" class="text-slate-400 hover:text-amber-400 p-1" title="Info">
+                <i data-lucide="info" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div id="penetrate-bonus-wrap" class="flex items-center gap-2">
+              <span class="text-[11px] text-slate-300 font-bold">Sweep Bonus:</span>
+              <input id="cfg-penetrate-bonus" type="number" min="1" max="10" value="1" class="w-16 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1 text-center font-black text-white text-xs">
+            </div>
+          </div>
+
+          <!-- Birdie, Eagle, Albatross Bonuses -->
+          <div class="sm:col-span-2 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+            <div class="flex items-center justify-between flex-wrap gap-1">
+              <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Under-Par Score Bonuses (Points)</label>
+              <span class="text-[11px] text-slate-400">Extra points awarded when winning a hand with under-par scores</span>
+            </div>
+            <div class="grid grid-cols-3 gap-2.5">
+              <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                <label class="block text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                  <span class="golf-badge golf-birdie !w-4 !h-4 !text-[9px]">3</span>
+                  <span>Birdie Bonus</span>
+                </label>
+                <input id="cfg-birdie-point" type="number" min="1" max="20" value="2" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-center font-black text-white text-xs focus:ring-1 focus:ring-amber-500">
+              </div>
+
+              <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                <label class="block text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                  <span class="golf-badge golf-eagle !w-4 !h-4 !text-[9px]">3</span>
+                  <span>Eagle Bonus</span>
+                </label>
+                <input id="cfg-eagle-point" type="number" min="1" max="30" value="3" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-center font-black text-white text-xs focus:ring-1 focus:ring-amber-500">
+              </div>
+
+              <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                <label class="block text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
+                  <span class="golf-badge golf-eagle !w-4 !h-4 !text-[9px]">2</span>
+                  <span>Albatross Bonus</span>
+                </label>
+                <input id="cfg-albatross-point" type="number" min="1" max="50" value="4" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-center font-black text-white text-xs focus:ring-1 focus:ring-amber-500">
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Tournament Title Input & Save Settings Button -->
+        <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div class="flex-1 w-full">
+            <label class="block text-xs font-bold text-slate-400 mb-1">Game / Tournament Title</label>
+            <input id="cfg-tourn-title" type="text" value="Sunday Golf Match" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs">
+          </div>
+          <button onclick="saveGameSettings()" class="py-2.5 px-5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-md shrink-0 flex items-center gap-1.5">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            <span>Save Game Settings</span>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- 3. Course Specs & Pars Table -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl space-y-4">
+        
+        <div class="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-800">
+          <div>
+            <h3 class="text-sm sm:text-base font-extrabold text-white flex items-center gap-2">
+              <i data-lucide="flag" class="w-4 h-4 text-emerald-400"></i>
+              <span>Course Setup & Hole Pars (1–18)</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-0.5">Select a course or customize Par, Stroke Handicap index, and Turbo toggles.</p>
+          </div>
+
+          <!-- Pre-loaded Course Selector -->
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-bold text-slate-400">Course:</label>
+            <select id="course-selector" onchange="onCourseSelected(this.value)" class="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white font-black max-w-[200px] sm:max-w-xs truncate">
+              <!-- Dynamically populated from courses.json -->
+            </select>
+          </div>
+        </div>
+
+        <!-- 18 Holes Table -->
+        <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/70 p-1">
+          <table class="w-full text-xs text-center border-collapse">
+            <thead>
+              <tr class="bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-wider border-b border-slate-800">
+                <th class="py-2 px-2 text-left">Hole</th>
+                <th class="py-2 px-2">Par (3/4/5)</th>
+                <th class="py-2 px-2">HCP Index</th>
+                <th class="py-2 px-2">Turbo Hole</th>
+              </tr>
+            </thead>
+            <tbody id="course-holes-tbody" class="divide-y divide-slate-800/60 font-medium">
+              <!-- Dynamically populated 18 rows -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Course Summary & Save Button -->
+        <div class="flex items-center justify-between flex-wrap gap-3 pt-1">
+          <div class="text-xs text-slate-400 font-bold">
+            <span>Out: <strong id="course-out-par" class="text-white">36</strong></span>
+            <span class="mx-2">•</span>
+            <span>In: <strong id="course-in-par" class="text-white">36</strong></span>
+            <span class="mx-2">•</span>
+            <span>Total Par: <strong id="course-tot-par" class="text-amber-400 font-black">72</strong></span>
+          </div>
+
+          <button id="btn-save-course" onclick="saveCourseSpecs()" class="py-2 px-5 rounded-xl bg-slate-800 text-slate-400 font-black text-xs transition border border-slate-700 flex items-center gap-1.5">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            <span>Save Course Specs</span>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- 4. Danger Zone / Resets -->
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-5 shadow-xl space-y-3">
+        <h4 class="text-xs font-bold uppercase tracking-wider text-rose-400">Danger Zone</h4>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button onclick="resetAllScores()" class="flex-1 py-3 px-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-rose-500/50 text-slate-300 hover:text-rose-400 font-extrabold text-xs transition flex items-center justify-center gap-2 shadow-sm">
+            <i data-lucide="rotate-ccw" class="w-4 h-4 text-rose-500"></i>
+            <span>Reset All Scores (Hole 1)</span>
+          </button>
+          <button onclick="restoreDefaultData()" class="flex-1 py-3 px-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-slate-300 hover:text-amber-300 font-extrabold text-xs transition flex items-center justify-center gap-2 shadow-sm">
+            <i data-lucide="refresh-cw" class="w-4 h-4 text-amber-500"></i>
+            <span>Restore Defaults</span>
+          </button>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ================= MODALS ================= -->
+
+  <!-- 1. Info / Explanation Tooltip Modal -->
+  <div id="info-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4">
+      <div class="flex items-start gap-3">
+        <div class="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 text-xl font-black">
+          ℹ️
+        </div>
+        <div class="space-y-1">
+          <h3 id="info-modal-title" class="text-base sm:text-lg font-black text-white">Feature Info</h3>
+          <p id="info-modal-desc" class="text-xs text-slate-300 leading-relaxed"></p>
+        </div>
+      </div>
+      <div class="pt-2">
+        <button onclick="closeInfoModal()" class="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition">
+          Got It
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Edit Hole Confirmation Warning Modal -->
+  <div id="edit-warning-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-amber-500/40 rounded-3xl max-w-md w-full p-5 sm:p-6 shadow-2xl space-y-4">
+      <div class="flex items-start gap-3">
+        <div class="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 text-xl font-black">
+          ⚠️
+        </div>
+        <div class="space-y-1">
+          <h3 class="text-base sm:text-lg font-black text-white">
+            Edit Hole <span id="modal-edit-hole-num">1</span> Score?
+          </h3>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            This hole has confirmed scores. Unlocking and modifying scores will update cash balances, momentum, and leaderboard standings.
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 pt-1">
+        <button onclick="closeEditWarningModal()" class="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+          Cancel
+        </button>
+        <button onclick="confirmEditHole()" class="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-1.5">
+          <i data-lucide="unlock" class="w-4 h-4"></i>
+          <span>Unlock & Edit</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fixed Mobile Bottom Navigation Bar -->
+  <nav class="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800/90 px-1 py-1 shadow-2xl flex items-center justify-around mobile-bottom-nav">
+    
+    <button onclick="switchTab('play')" id="tab-btn-mobile-play" class="flex-1 flex flex-col items-center justify-center py-1 text-amber-400 font-black transition">
+      <i data-lucide="crosshair" class="w-5 h-5 mb-0.5"></i>
+      <span class="text-[10px] tracking-tight leading-none">Scoring</span>
+    </button>
+
+    <button onclick="switchTab('scorecard')" id="tab-btn-mobile-scorecard" class="flex-1 flex flex-col items-center justify-center py-1 text-slate-400 hover:text-slate-200 font-medium transition">
+      <i data-lucide="grid" class="w-5 h-5 mb-0.5"></i>
+      <span class="text-[10px] tracking-tight leading-none">Scorecard</span>
+    </button>
+
+    <button onclick="switchTab('momentum')" id="tab-btn-mobile-momentum" class="flex-1 flex flex-col items-center justify-center py-1 text-slate-400 hover:text-slate-200 font-medium transition">
+      <i data-lucide="trending-up" class="w-5 h-5 mb-0.5"></i>
+      <span class="text-[10px] tracking-tight leading-none">Cash</span>
+    </button>
+
+    <button onclick="switchTab('leaderboard')" id="tab-btn-mobile-leaderboard" class="flex-1 flex flex-col items-center justify-center py-1 text-amber-300/80 hover:text-amber-300 font-extrabold transition">
+      <i data-lucide="trophy" class="w-5 h-5 mb-0.5 text-amber-400"></i>
+      <span class="text-[10px] tracking-tight leading-none">Rankings</span>
+    </button>
+
+    <button onclick="switchTab('settings')" id="tab-btn-mobile-settings" class="flex-1 flex flex-col items-center justify-center py-1 text-slate-400 hover:text-slate-200 font-medium transition">
+      <i data-lucide="settings" class="w-5 h-5 mb-0.5"></i>
+      <span class="text-[10px] tracking-tight leading-none">Settings</span>
+    </button>
+
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>

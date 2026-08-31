@@ -1,0 +1,161 @@
+{
+  "tournament_name": "Sunday Golf Match",
+  "course_id": "course-krungthep-kreetha",
+  "course_name": "Krungthep Kreetha Golf Course",
+  "game_settings": {
+    "game_mode": "WOLF",
+    "hand_count": 2,
+    "cash_per_point": 100,
+    "currency": "THB",
+    "turbo": true,
+    "turbo_multiplier": 2,
+    "turbo_handicap": false,
+    "penetrate": true,
+    "penetrate_bonus": 1,
+    "birdie_point": 2,
+    "eagle_point": 3,
+    "albatross_point": 4
+  },
+  "players": [
+    {
+      "id": "p1",
+      "name": "Shirobon",
+      "color": "#ffffff",
+      "hcp_out": 0,
+      "hcp_in": 0
+    },
+    {
+      "id": "p2",
+      "name": "Kurobon",
+      "color": "#1e293b",
+      "hcp_out": 0,
+      "hcp_in": 0
+    },
+    {
+      "id": "p3",
+      "name": "Akabon",
+      "color": "#ef4444",
+      "hcp_out": 3,
+      "hcp_in": 3
+    },
+    {
+      "id": "p4",
+      "name": "Aobon",
+      "color": "#3b82f6",
+      "hcp_out": 0,
+      "hcp_in": 0
+    }
+  ],
+  "holes": [
+    {
+      "hole": 1,
+      "par": 4,
+      "handicap": 7,
+      "is_turbo": false
+    },
+    {
+      "hole": 2,
+      "par": 4,
+      "handicap": 11,
+      "is_turbo": false
+    },
+    {
+      "hole": 3,
+      "par": 3,
+      "handicap": 15,
+      "is_turbo": false
+    },
+    {
+      "hole": 4,
+      "par": 5,
+      "handicap": 3,
+      "is_turbo": false
+    },
+    {
+      "hole": 5,
+      "par": 4,
+      "handicap": 1,
+      "is_turbo": false
+    },
+    {
+      "hole": 6,
+      "par": 4,
+      "handicap": 9,
+      "is_turbo": false
+    },
+    {
+      "hole": 7,
+      "par": 3,
+      "handicap": 17,
+      "is_turbo": false
+    },
+    {
+      "hole": 8,
+      "par": 5,
+      "handicap": 5,
+      "is_turbo": true
+    },
+    {
+      "hole": 9,
+      "par": 4,
+      "handicap": 13,
+      "is_turbo": true
+    },
+    {
+      "hole": 10,
+      "par": 4,
+      "handicap": 8,
+      "is_turbo": false
+    },
+    {
+      "hole": 11,
+      "par": 5,
+      "handicap": 4,
+      "is_turbo": false
+    },
+    {
+      "hole": 12,
+      "par": 3,
+      "handicap": 16,
+      "is_turbo": false
+    },
+    {
+      "hole": 13,
+      "par": 4,
+      "handicap": 2,
+      "is_turbo": false
+    },
+    {
+      "hole": 14,
+      "par": 4,
+      "handicap": 10,
+      "is_turbo": false
+    },
+    {
+      "hole": 15,
+      "par": 4,
+      "handicap": 12,
+      "is_turbo": false
+    },
+    {
+      "hole": 16,
+      "par": 3,
+      "handicap": 18,
+      "is_turbo": false
+    },
+    {
+      "hole": 17,
+      "par": 5,
+      "handicap": 6,
+      "is_turbo": true
+    },
+    {
+      "hole": 18,
+      "par": 4,
+      "handicap": 14,
+      "is_turbo": true
+    }
+  ],
+  "scores": {},
+  "last_updated": 1788150695.6370816
+}
