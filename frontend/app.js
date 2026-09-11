@@ -494,9 +494,9 @@ function renderHoleStatusBanner(hNum, hSpec, currCalc, isWolf, isFFA, isThai, se
       </span>
     `;
   } else if (isFFA) {
-    modeTxt = `<span class="text-[11px] font-extrabold text-emerald-400">⚔️ Free-For-All Match • Hole ${hNum}</span>`;
+    modeTxt = `<span class="text-[11px] font-extrabold text-emerald-400">Free-For-All</span>`;
   } else {
-    modeTxt = `<span class="text-[11px] font-bold text-slate-400">Match Hole ${hNum}</span>`;
+    modeTxt = `<span class="text-[11px] font-extrabold text-amber-400">Teams</span>`;
   }
 
   banner.innerHTML = `
@@ -557,9 +557,39 @@ function renderTeamPlayerCards(currCalc, hSpec, isThai) {
     return { ...p, score, net, hasHcp };
   }).filter(Boolean);
 
-  // Auto-sort lowest score at top within each team
-  teamAPlayers.sort((a, b) => a.net - b.net || a.score - b.score);
-  teamBPlayers.sort((a, b) => a.net - b.net || a.score - b.score);
+  // Position does NOT change when adjusting the score; only rearranges after score is saved for this hole
+  const isWolf = (state.tournament?.game_settings?.game_mode === 'WOLF');
+  const wolfPlayer = currCalc?.wolf_player;
+
+  if (isHolePlayed) {
+    const getSavedScoreSort = (p) => {
+      const s = existingScores[p.id];
+      if (s === undefined) return 999;
+      const net = p.hasHcp ? s - 1 : s;
+      return net * 100 + s;
+    };
+
+    if (isWolf && wolfPlayer) {
+      // In Wolf mode, Wolf player is always first on Team A
+      teamAPlayers.sort((a, b) => {
+        if (a.id === wolfPlayer.id) return -1;
+        if (b.id === wolfPlayer.id) return 1;
+        return getSavedScoreSort(a) - getSavedScoreSort(b);
+      });
+    } else {
+      teamAPlayers.sort((a, b) => getSavedScoreSort(a) - getSavedScoreSort(b));
+    }
+    teamBPlayers.sort((a, b) => getSavedScoreSort(a) - getSavedScoreSort(b));
+  } else {
+    if (isWolf && wolfPlayer) {
+      // In Wolf mode, keep Wolf player at top of Team A even when unplayed
+      teamAPlayers.sort((a, b) => {
+        if (a.id === wolfPlayer.id) return -1;
+        if (b.id === wolfPlayer.id) return 1;
+        return 0;
+      });
+    }
+  }
 
   if (teamACount) teamACount.textContent = teamAPlayers.length;
   if (teamBCount) teamBCount.textContent = teamBPlayers.length;
@@ -570,7 +600,6 @@ function renderTeamPlayerCards(currCalc, hSpec, isThai) {
 
 function renderFFAScoringView(currCalc, hSpec, isThai) {
   const ffaList = document.getElementById('ffa-players-list');
-  const matchupsList = document.getElementById('ffa-matchups-list');
   const ffaBadge = document.getElementById('ffa-player-count-badge');
   const comboCountEl = document.getElementById('ffa-combo-count');
 
@@ -606,8 +635,16 @@ function renderFFAScoringView(currCalc, hSpec, isThai) {
     return { ...p, score, net, hasHcp, ptsDelta, cashDelta };
   });
 
-  // Sort lowest net score first, then raw score
-  ffaPlayers.sort((a, b) => a.net - b.net || a.score - b.score);
+  // Position does NOT change when adjusting the score; only rearranges after score is saved for this hole
+  if (isHolePlayed) {
+    const getSavedScoreSort = (p) => {
+      const s = existingScores[p.id];
+      if (s === undefined) return 999;
+      const net = p.hasHcp ? s - 1 : s;
+      return net * 100 + s;
+    };
+    ffaPlayers.sort((a, b) => getSavedScoreSort(a) - getSavedScoreSort(b));
+  }
 
   // Render player cards
   ffaList.innerHTML = ffaPlayers.map(p => {
@@ -678,68 +715,147 @@ function renderFFAScoringView(currCalc, hSpec, isThai) {
     `;
   }).join('');
 
-  // Render 1v1 Pairwise Matchups Breakdown
-  if (matchupsList) {
-    const matchups = currCalc?.match?.matchups || [];
-    const totalCombos = Math.round((players.length * (players.length - 1)) / 2);
-    if (comboCountEl) {
-      comboCountEl.textContent = `${matchups.length || totalCombos} combinations`;
-    }
+  // Render 1v1 Pairwise Matchups Matrix Table
+  renderFFAMatchupsTable(currCalc, players, cashPerPoint, curr, comboCountEl);
+}
 
-    if (matchups.length > 0) {
-      matchupsList.innerHTML = matchups.map(m => {
-        const isTie = (m.winner_id === 'tie' || m.points === 0);
-        let resultHtml = '';
-        if (isTie) {
-          resultHtml = `<span class="text-[10px] font-bold text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">Tied (0)</span>`;
+function renderFFAMatchupsTable(currCalc, players, cashPerPoint, curr, comboCountEl) {
+  const tableEl = document.getElementById('ffa-matchups-table');
+  if (!tableEl) return;
+
+  const matchups = currCalc?.match?.matchups || [];
+  const isPlayed = Boolean(currCalc?.match?.played && matchups.length > 0);
+  const totalCombos = Math.round((players.length * (players.length - 1)) / 2);
+  if (comboCountEl) {
+    comboCountEl.textContent = `${matchups.length || totalCombos} pairings (Matrix)`;
+  }
+
+  // 1. Header row: Corner header + Column headers (each player) + TOT
+  let theadHtml = `
+    <thead>
+      <tr class="bg-slate-950 text-slate-300 border-b border-slate-800">
+        <th class="py-2.5 px-3 text-left font-black text-[11px] text-amber-400 uppercase tracking-wider sticky left-0 z-20 bg-slate-950 border-r border-slate-800 min-w-[95px]">
+          Player
+        </th>
+  `;
+
+  players.forEach(p => {
+    theadHtml += `
+      <th class="py-2 px-1.5 text-center font-extrabold text-xs text-slate-200 border-r border-slate-800/80 min-w-[55px] max-w-[75px]">
+        <div class="flex flex-col items-center justify-center gap-1 min-w-0">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0 border border-white/40 shadow-sm" style="background-color: ${p.color};"></span>
+          <span class="truncate max-w-[58px] font-extrabold text-white text-[11px] leading-tight">${p.name}</span>
+        </div>
+      </th>
+    `;
+  });
+
+  theadHtml += `
+        <th class="py-2.5 px-2 text-center font-black text-[11px] text-amber-400 bg-slate-950 border-l border-slate-800 min-w-[50px]">
+          TOT
+        </th>
+      </tr>
+    </thead>
+  `;
+
+  // 2. Body rows: one row per player
+  let tbodyHtml = `<tbody class="divide-y divide-slate-800/60">`;
+
+  players.forEach((pRow, rIdx) => {
+    tbodyHtml += `
+      <tr class="hover:bg-slate-850/40 transition">
+        <!-- Row Header: Sticky Player Name & Color Dot -->
+        <th class="py-2 px-3 text-left font-extrabold text-xs text-white sticky left-0 z-10 bg-slate-950 border-r border-slate-800 whitespace-nowrap min-w-[95px]">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0 border border-white/40 shadow-sm" style="background-color: ${pRow.color};"></span>
+            <span class="truncate max-w-[75px] font-extrabold text-white text-xs">${pRow.name}</span>
+          </div>
+        </th>
+    `;
+
+    // Each column player
+    players.forEach((pCol, cIdx) => {
+      if (rIdx === cIdx) {
+        // Diagonal cell: greyed out
+        tbodyHtml += `
+          <td class="p-2 text-center font-mono text-xs ffa-diagonal-cell border-r border-slate-800/60" title="${pRow.name} (Self)">
+            <span class="opacity-20">—</span>
+          </td>
+        `;
+      } else {
+        // Find matchup between pRow and pCol
+        const m = matchups.find(item => 
+          (item.p1_id === pRow.id && item.p2_id === pCol.id) ||
+          (item.p1_id === pCol.id && item.p2_id === pRow.id)
+        );
+
+        if (isPlayed && m) {
+          if (m.winner_id === 'tie' || m.points === 0) {
+            tbodyHtml += `
+              <td class="p-2 text-center font-mono font-bold text-xs text-slate-400 bg-slate-900/40 border-r border-slate-800/60 hover:bg-slate-800/60 transition" title="${pRow.name} vs ${pCol.name}: Tied (0 pts)">
+                0
+              </td>
+            `;
+          } else if (m.winner_id === pRow.id) {
+            // pRow Won
+            const isTurbo = Boolean(currCalc.is_turbo || currCalc.match?.is_turbo) && Boolean(state.tournament?.game_settings?.turbo);
+            tbodyHtml += `
+              <td class="p-2 text-center font-mono font-black text-xs text-emerald-400 bg-emerald-950/40 border-r border-slate-800/60 hover:bg-emerald-900/40 transition" title="${pRow.name} beat ${pCol.name} (+${m.points} pts)">
+                <div class="inline-flex items-center justify-center gap-0.5">
+                  <span>+${m.points}</span>
+                  ${isTurbo ? `<span class="text-[9px]">🔥</span>` : ''}
+                </div>
+              </td>
+            `;
+          } else {
+            // pRow Lost
+            tbodyHtml += `
+              <td class="p-2 text-center font-mono font-black text-xs text-rose-400 bg-rose-950/40 border-r border-slate-800/60 hover:bg-rose-900/40 transition" title="${pRow.name} lost to ${pCol.name} (-${m.points} pt${m.points > 1 ? 's' : ''})">
+                -${m.points}
+              </td>
+            `;
+          }
         } else {
-          const winnerName = (m.winner_id === m.p1_id) ? m.p1_name : m.p2_name;
-          resultHtml = `
-            <span class="text-[10px] font-black text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/50">
-              ${winnerName} (+${m.points} pt${m.points > 1 ? 's' : ''})
-            </span>
+          // Pending matchup
+          tbodyHtml += `
+            <td class="p-2 text-center font-mono text-xs text-slate-600 bg-slate-900/20 border-r border-slate-800/60" title="${pRow.name} vs ${pCol.name} (Pending)">
+              —
+            </td>
           `;
         }
-
-        return `
-          <div class="ffa-matchup-item flex items-center justify-between gap-1.5 min-w-0">
-            <div class="flex items-center gap-1 min-w-0 truncate text-[11px] font-bold text-slate-300">
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${m.p1_color};"></span>
-              <span class="truncate text-white font-extrabold max-w-[60px]">${m.p1_name}</span>
-              <span class="text-slate-500 text-[10px]">(${m.p1_net})</span>
-              <span class="text-amber-400 font-mono font-bold text-[10px]">vs</span>
-              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${m.p2_color};"></span>
-              <span class="truncate text-white font-extrabold max-w-[60px]">${m.p2_name}</span>
-              <span class="text-slate-500 text-[10px]">(${m.p2_net})</span>
-            </div>
-            <div class="shrink-0">
-              ${resultHtml}
-            </div>
-          </div>
-        `;
-      }).join('');
-    } else {
-      // Preview pairwise combinations
-      const previewPairs = [];
-      for (let i = 0; i < players.length; i++) {
-        for (let j = i + 1; j < players.length; j++) {
-          previewPairs.push([players[i], players[j]]);
-        }
       }
-      matchupsList.innerHTML = previewPairs.map(([p1, p2]) => `
-        <div class="ffa-matchup-item flex items-center justify-between gap-1.5 min-w-0">
-          <div class="flex items-center gap-1.5 min-w-0 truncate text-[11px] font-bold text-slate-300">
-            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p1.color};"></span>
-            <span class="truncate text-white font-extrabold">${p1.name}</span>
-            <span class="text-amber-400 font-mono font-bold text-[10px]">vs</span>
-            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p2.color};"></span>
-            <span class="truncate text-white font-extrabold">${p2.name}</span>
-          </div>
-          <span class="text-[10px] text-slate-500 font-medium">Pending</span>
-        </div>
-      `).join('');
+    });
+
+    // Row total points column
+    const rowPts = currCalc?.match?.point_deltas?.[pRow.id];
+    if (isPlayed && rowPts !== undefined) {
+      const rowCash = rowPts * cashPerPoint;
+      let totClass = 'text-slate-300 bg-slate-950/90 font-bold';
+      let sign = '';
+      if (rowPts > 0) {
+        totClass = 'text-emerald-400 bg-emerald-950/60 font-black';
+        sign = '+';
+      } else if (rowPts < 0) {
+        totClass = 'text-rose-400 bg-rose-950/60 font-black';
+      }
+      tbodyHtml += `
+        <td class="p-2 text-center font-mono text-xs border-l border-slate-800 ${totClass}" title="${pRow.name} net: ${sign}${rowPts} pts (${formatCash(rowCash, curr)})">
+          ${sign}${rowPts}
+        </td>
+      `;
+    } else {
+      tbodyHtml += `
+        <td class="p-2 text-center font-mono text-xs text-slate-600 bg-slate-950/90 border-l border-slate-800">
+          —
+        </td>
+      `;
     }
-  }
+
+    tbodyHtml += `</tr>`;
+  });
+
+  tbodyHtml += `</tbody>`;
+  tableEl.innerHTML = theadHtml + tbodyHtml;
 }
 
 function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
@@ -798,6 +914,12 @@ function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
     `;
   }
 
+  const isWolfMode = (state.tournament?.game_settings?.game_mode === 'WOLF');
+  const isTheWolf = isWolfMode && (currCalc?.wolf_player?.id === p.id);
+  const wolfBadge = isTheWolf 
+    ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-black bg-purple-900/80 text-purple-200 border border-purple-500/40 shrink-0">🐺 WOLF</span>` 
+    : '';
+
   const wingIcon = p.hasHcp 
     ? `<span class="text-sky-300 text-xs" title="${isThai ? 'TOR -1 stroke applied' : 'Handicap -1 stroke applied'}">🪽</span>` 
     : '';
@@ -815,6 +937,7 @@ function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
         <div class="flex items-center gap-1.5 min-w-0 truncate">
           <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm border border-white/30" style="background-color: ${p.color};"></span>
           <span class="text-xs font-black text-white truncate">${p.name}</span>
+          ${wolfBadge}
           ${wingIcon}
         </div>
 
@@ -879,17 +1002,25 @@ function renderScoringActionBar(hNum, currCalc) {
     `;
   } else {
     container.innerHTML = `
-      <button type="button" onclick="clearHoleScores(${hNum})" class="py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 font-extrabold text-xs border border-slate-800 transition flex items-center justify-center gap-1">
+      <button type="button" onclick="clearHoleScores(${hNum})" class="py-3 px-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 font-extrabold text-xs border border-slate-800 transition flex items-center justify-center gap-1" title="Clear Hole ${hNum}">
         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
         <span class="hidden sm:inline">Clear</span>
       </button>
 
-      <button type="button" onclick="saveHoleScores(${hNum})" class="flex-1 py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-green-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-2">
+      <button type="button" onclick="saveHoleScores(${hNum})" class="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-green-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-1.5">
         <i data-lucide="check-circle-2" class="w-4 h-4"></i>
-        <span>Save & ${hNum < 18 ? `Next Hole (${hNum + 1})` : 'Finish Match'}</span>
+        <span>Save</span>
       </button>
+
+      ${hNum < 18 ? `
+        <button type="button" onclick="selectHole(${hNum + 1})" class="py-3.5 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs sm:text-sm border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
+          <span>Next Hole</span>
+          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </button>
+      ` : ''}
     `;
   }
+  initIcons();
 }
 
 // Drag and Drop Handlers
@@ -948,28 +1079,24 @@ function stepScore(playerId, delta) {
 
   const nextScore = Math.max(1, Math.min(15, current + delta));
   state.localScores[playerId] = nextScore;
-
   renderScoringTab();
+  initIcons();
 }
 
 async function saveHoleScores(hNum) {
-  if (!state.tournament) return;
-  const players = state.tournament.players || [];
-  const holes = state.tournament.holes || [];
-  const hSpec = holes.find(h => h.hole === hNum) || { par: 4 };
-  const par = hSpec.par || 4;
-
-  const existingScores = state.tournament.calculated_holes?.find(h => h.hole === hNum)?.scores || {};
+  const hSpec = state.tournament?.holes?.find(h => h.hole === hNum) || { par: 4 };
+  const players = state.tournament?.players || [];
+  const currCalc = state.tournament?.calculated_holes?.find(h => h.hole === hNum);
+  const existingScores = currCalc?.scores || {};
 
   const scorePayload = {};
   players.forEach(p => {
-    const pid = p.id;
-    if (state.localScores[pid] !== undefined) {
-      scorePayload[pid] = state.localScores[pid];
-    } else if (existingScores[pid] !== undefined) {
-      scorePayload[pid] = existingScores[pid];
+    if (state.localScores[p.id] !== undefined) {
+      scorePayload[p.id] = state.localScores[p.id];
+    } else if (existingScores[p.id] !== undefined) {
+      scorePayload[p.id] = existingScores[p.id];
     } else {
-      scorePayload[pid] = par;
+      scorePayload[p.id] = hSpec.par || 4;
     }
   });
 
@@ -990,10 +1117,6 @@ async function saveHoleScores(hNum) {
       state.localScores = {};
       delete state.unlockedHoles[`${hNum}`];
       updateTournamentState(data);
-
-      if (hNum < 18) {
-        selectHole(hNum + 1);
-      }
     }
   } catch (err) {
     console.error("Error saving score:", err);

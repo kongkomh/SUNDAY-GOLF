@@ -200,7 +200,7 @@
           </div>
         </div>
 
-        <!-- FFA Pairwise Matchup Combinations Breakdown Card -->
+        <!-- FFA Pairwise Matchup Combinations Breakdown Card (Matrix Table) -->
         <div id="ffa-matchups-card" class="p-3 sm:p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-2.5 shadow-lg">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
@@ -209,8 +209,10 @@
             </div>
             <span id="ffa-combo-count" class="text-[10px] font-mono text-slate-400"></span>
           </div>
-          <div id="ffa-matchups-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
-            <!-- Dynamically populated combinations e.g. A vs B, A vs C, B vs C -->
+          <div class="overflow-x-auto rounded-2xl border border-slate-800/80 scrollbar-thin bg-slate-950/70 shadow-inner">
+            <table id="ffa-matchups-table" class="w-full border-collapse text-xs">
+              <!-- Dynamically populated 1v1 matrix table with diagonal cells greyed out -->
+            </table>
           </div>
         </div>
 

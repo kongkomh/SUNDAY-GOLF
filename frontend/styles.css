@@ -264,3 +264,16 @@
   background: rgba(15, 23, 42, 0.98);
 }
 
+/* FFA Matrix Diagonal Cells */
+.ffa-diagonal-cell {
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(30, 41, 59, 0.45),
+    rgba(30, 41, 59, 0.45) 4px,
+    rgba(11, 15, 25, 0.95) 4px,
+    rgba(11, 15, 25, 0.95) 8px
+  ) !important;
+  color: #475569 !important;
+  user-select: none;
+}
+
