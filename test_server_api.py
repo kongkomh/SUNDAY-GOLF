@@ -123,6 +123,66 @@ def test_api():
             assert set_res["game_settings"]["cash_per_point"] == 200
             print("✅ POST /api/settings passed. Mode: WOLF", flush=True)
 
+        # 5b. Test POST /api/settings (Switch to TEAMS mode with default_teams)
+        teams_payload = {
+            "game_settings": {
+                "game_mode": "TEAMS",
+                "default_teams": {
+                    "p1": "left",
+                    "p2": "left",
+                    "p3": "right",
+                    "p4": "right",
+                    "p5": "right"
+                }
+            }
+        }
+        req = urllib.request.Request(settings_url, data=json.dumps(teams_payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            assert resp.getcode() == 200
+            teams_res = json.loads(resp.read().decode("utf-8"))
+            assert teams_res["game_settings"]["game_mode"] == "TEAMS"
+            assert teams_res["default_team_a"] == ["p1", "p2"]
+            assert teams_res["default_team_b"] == ["p3", "p4", "p5"]
+            p1_obj = next(p for p in teams_res["players"] if p["id"] == "p1")
+            assert p1_obj["default_team"] == "left"
+            print("✅ POST /api/settings passed. Mode: TEAMS with Left/Right default teams.", flush=True)
+
+        # 5c. Test POST /api/settings (Switch to FREE_FOR_ALL mode) and record score
+        ffa_settings = {
+            "game_settings": {
+                "game_mode": "FREE_FOR_ALL"
+            }
+        }
+        req = urllib.request.Request(settings_url, data=json.dumps(ffa_settings).encode("utf-8"), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            assert resp.getcode() == 200
+            ffa_res = json.loads(resp.read().decode("utf-8"))
+            assert ffa_res["game_settings"]["game_mode"] == "FREE_FOR_ALL"
+            print("✅ POST /api/settings passed. Mode: FREE_FOR_ALL", flush=True)
+
+        score_ffa_payload = {
+            "hole": 2,
+            "scores": {
+                "p1": 4, # Par
+                "p2": 5, # Bogey
+                "p3": 5, # Bogey
+                "p4": 6, # Double
+                "p5": 7  # Triple
+            }
+        }
+        req = urllib.request.Request(score_url, data=json.dumps(score_ffa_payload).encode("utf-8"), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            assert resp.getcode() == 200
+            ffa_score_data = json.loads(resp.read().decode("utf-8"))
+            h2 = next(h for h in ffa_score_data["calculated_holes"] if h["hole"] == 2)
+            assert h2["match"]["played"] is True
+            assert h2["match"]["game_mode"] == "FREE_FOR_ALL"
+            assert len(h2["match"]["matchups"]) == 10  # 5 C 2 = 10 matchups
+            # Verify sum of deltas is 0
+            deltas_sum = sum(h2["match"]["point_deltas"].values())
+            assert abs(deltas_sum) < 0.001, f"Expected sum 0, got {deltas_sum}"
+            print("✅ POST /api/score (FREE_FOR_ALL) passed. 10 pairwise matchups, sum of deltas = 0.", flush=True)
+
         # 6. Test GET / static HTML
         index_url = f"http://localhost:{port}/"
         with urllib.request.urlopen(index_url, timeout=4) as resp:

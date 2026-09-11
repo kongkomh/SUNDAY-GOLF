@@ -57,7 +57,7 @@
           <div class="min-w-0">
             <h1 id="header-tournament-name" class="font-black text-xs sm:text-base tracking-tight leading-tight text-white flex items-center gap-1.5 truncate">
               <span class="truncate">Sunday Golf Match</span>
-              <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">NORMAL</span>
+              <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">TEAMS</span>
             </h1>
             <p id="header-course-name" class="text-[11px] text-slate-400 font-medium truncate max-w-xs sm:max-w-sm">Krungthep Kreetha Golf Course</p>
           </div>
@@ -138,23 +138,23 @@
       </div>
 
       <!-- Instruction Hint -->
-      <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 font-medium">
-        <span class="flex items-center gap-1">
+      <div id="scoring-instruction-hint" class="flex items-center justify-between text-[11px] text-slate-400 px-1 font-medium">
+        <span class="flex items-center gap-1" id="instruction-hint-left">
           <i data-lucide="move-horizontal" class="w-3.5 h-3.5 text-amber-400"></i>
-          <span>Drag or tap player cards to assign teams</span>
+          <span id="instruction-hint-text">Drag or tap player cards to assign teams</span>
         </span>
         <span id="hand-count-info-badge" class="text-amber-400 font-bold">Best 2 Balls</span>
       </div>
 
-      <!-- Split Left / Right Team Boxes (Mobile Responsive Side-by-Side) -->
-      <div class="grid grid-cols-2 gap-2 sm:gap-4">
+      <!-- Split Left / Right Team Boxes (for TEAMS and WOLF Modes) -->
+      <div id="split-teams-wrapper" class="grid grid-cols-2 gap-2 sm:gap-4">
         
         <!-- Team A (Left) / WOLF -->
         <div id="team-a-container" class="p-2 sm:p-3 rounded-2xl bg-slate-900/90 border-2 border-amber-500/40 flex flex-col space-y-2.5 team-dropzone shadow-lg" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event, 'team_a')">
           
           <div class="flex items-center justify-between pb-1.5 border-b border-slate-800">
             <div id="team-a-title" class="font-black text-xs sm:text-sm text-amber-400 flex items-center gap-1.5 truncate">
-              <span>Team A</span>
+              <span>Left Team</span>
             </div>
             <span id="team-a-count" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">0</span>
           </div>
@@ -169,13 +169,48 @@
           
           <div class="flex items-center justify-between pb-1.5 border-b border-slate-800">
             <div id="team-b-title" class="font-black text-xs sm:text-sm text-sky-400 flex items-center gap-1.5 truncate">
-              <span>Team B</span>
+              <span>Right Team</span>
             </div>
             <span id="team-b-count" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">0</span>
           </div>
 
           <div id="team-b-players-list" class="flex-1 space-y-2">
             <!-- Dynamically populated player cards -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Free-For-All Unified Container (for FREE_FOR_ALL Mode) -->
+      <div id="ffa-wrapper" class="space-y-3 hidden">
+        
+        <!-- FFA Player Cards Container -->
+        <div class="p-3 sm:p-4 rounded-3xl bg-slate-900/90 border-2 border-emerald-500/40 space-y-3 shadow-xl">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="font-black text-xs sm:text-sm text-emerald-400 uppercase tracking-wide">Free-For-All Singles Match</span>
+            </div>
+            <span id="ffa-player-count-badge" class="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-600/40">4 Players Competing</span>
+          </div>
+
+          <!-- All player cards with score dials -->
+          <div id="ffa-players-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- FFA Pairwise Matchup Combinations Breakdown Card -->
+        <div id="ffa-matchups-card" class="p-3 sm:p-4 rounded-3xl bg-slate-900 border border-slate-800 space-y-2.5 shadow-lg">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i data-lucide="swords" class="w-4 h-4 text-amber-400"></i>
+              <span class="font-extrabold text-xs text-white uppercase tracking-wider">1v1 Pair Combinations Breakdown</span>
+            </div>
+            <span id="ffa-combo-count" class="text-[10px] font-mono text-slate-400"></span>
+          </div>
+          <div id="ffa-matchups-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+            <!-- Dynamically populated combinations e.g. A vs B, A vs C, B vs C -->
           </div>
         </div>
 
@@ -270,7 +305,7 @@
             <div>
               <h2 id="lb-title" class="font-black text-sm sm:text-lg text-amber-400 tracking-wide uppercase">SUNDAY GOLF LEADERBOARD</h2>
               <div class="text-[11px] text-slate-400 font-semibold flex items-center gap-2">
-                <span id="lb-mode-txt">NORMAL MATCH</span>
+                <span id="lb-mode-txt">TEAMS MATCH</span>
                 <span>•</span>
                 <span id="lb-course-txt" class="text-white">Krungthep Kreetha</span>
               </div>
@@ -376,23 +411,43 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
           
           <!-- Game Mode Selector -->
-          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+          <div class="sm:col-span-2 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
             <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Game Mode</label>
-            <div class="grid grid-cols-2 gap-2">
-              <button type="button" onclick="setGameMode('NORMAL')" id="btn-mode-normal" class="py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-amber-500 text-slate-950 border-amber-400 shadow-md">
-                <span>NORMAL</span>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" onclick="setGameMode('TEAMS')" id="btn-mode-teams" class="py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-amber-500 text-slate-950 border-amber-400 shadow-md">
+                <span>TEAMS</span>
               </button>
-              <button type="button" onclick="setGameMode('WOLF')" id="btn-mode-wolf" class="py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-slate-900 text-slate-400 border-slate-700 hover:text-white">
+              <button type="button" onclick="setGameMode('FREE_FOR_ALL')" id="btn-mode-ffa" class="py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-slate-900 text-slate-400 border-slate-700 hover:text-white">
+                <span>FREE-FOR-ALL</span>
+              </button>
+              <button type="button" onclick="setGameMode('WOLF')" id="btn-mode-wolf" class="py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-slate-900 text-slate-400 border-slate-700 hover:text-white">
                 <span>🐺 WOLF</span>
               </button>
             </div>
             <p id="mode-help-text" class="text-[11px] text-slate-400">
-              In Normal mode, teams can be freely assigned or copied from hole to hole.
+              In Teams mode, players are divided into Left (Team A) and Right (Team B) teams for hole-by-hole match play.
             </p>
           </div>
 
+          <!-- Default Teams Assignment Box (Visible in TEAMS mode) -->
+          <div id="default-teams-box" class="sm:col-span-2 p-3.5 rounded-2xl bg-slate-950/80 border border-amber-500/30 space-y-2.5">
+            <div class="flex items-center justify-between flex-wrap gap-1">
+              <div>
+                <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Default Teams Assignment (Left / Right)</label>
+                <span class="text-[11px] text-slate-400">Sets the default Left (Team A) or Right (Team B) team for each player across all holes</span>
+              </div>
+              <div class="flex items-center gap-2 text-[10px] font-bold">
+                <span class="flex items-center gap-1 text-amber-400">● Left Team</span>
+                <span class="flex items-center gap-1 text-sky-400">● Right Team</span>
+              </div>
+            </div>
+            <div id="default-teams-player-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <!-- Dynamically populated players with [Left | Right] toggle buttons -->
+            </div>
+          </div>
+
           <!-- Best X Balls (Hand Count) -->
-          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+          <div id="hand-count-box" class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
             <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Best ... Balls (Hands Count)</label>
             <div class="flex items-center gap-2">
               <input id="cfg-hand-count" type="number" min="1" max="6" value="2" class="w-20 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-center font-black text-white text-sm focus:ring-1 focus:ring-amber-500">
@@ -449,7 +504,7 @@
           </div>
 
           <!-- Penetrate (Chuan) Option & Bonus -->
-          <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+          <div id="penetrate-box" class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
             <div class="flex items-center justify-between">
               <label class="flex items-center gap-2 text-xs font-black text-amber-400 uppercase cursor-pointer">
                 <input id="cfg-penetrate-enabled" type="checkbox" checked onchange="onPenetrateToggled(this.checked)" class="w-4 h-4 text-amber-500 rounded border-slate-700 bg-slate-900 focus:ring-0">

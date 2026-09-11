@@ -154,22 +154,28 @@ class TournamentStore:
                 p_color = p.get("color") or DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)]
                 p_out = int(p.get("hcp_out", 0) or 0)
                 p_in = int(p.get("hcp_in", 0) or 0)
+                p_def_team = p.get("default_team")
+                if p_def_team not in ("left", "right"):
+                    p_def_team = "left" if idx < (len(players_list) // 2) else "right"
                 clean_players.append({
                     "id": p_id,
                     "name": p_name,
                     "color": p_color,
                     "hcp_out": max(0, p_out),
-                    "hcp_in": max(0, p_in)
+                    "hcp_in": max(0, p_in),
+                    "default_team": p_def_team
                 })
 
             while len(clean_players) < 3:
                 idx = len(clean_players)
+                p_def_team = "left" if idx < 2 else "right"
                 clean_players.append({
                     "id": f"p{idx+1}",
                     "name": DEFAULT_PLAYER_NAMES[min(idx, len(DEFAULT_PLAYER_NAMES)-1)],
                     "color": DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)],
                     "hcp_out": 0,
-                    "hcp_in": 0
+                    "hcp_in": 0,
+                    "default_team": p_def_team
                 })
 
             self.data["players"] = clean_players
@@ -178,6 +184,14 @@ class TournamentStore:
             # Sanitize scores
             if "scores" in self.data and isinstance(self.data["scores"], dict):
                 self.data["scores"] = sanitize_scores_with_players(self.data["scores"], valid_ids)
+                current_settings = self.data.get("game_settings", {})
+                if current_settings.get("game_mode") == "TEAMS":
+                    def_a = [p["id"] for p in clean_players if p.get("default_team") == "left"]
+                    def_b = [p["id"] for p in clean_players if p.get("default_team") == "right"]
+                    for h_key, h_data in self.data["scores"].items():
+                        if isinstance(h_data, dict):
+                            h_data["team_a"] = copy.deepcopy(def_a)
+                            h_data["team_b"] = copy.deepcopy(def_b)
 
             self.data["last_updated"] = time.time()
             self._save(self.data)
@@ -197,10 +211,29 @@ class TournamentStore:
             for k in [
                 "game_mode", "hand_count", "cash_per_point", "currency",
                 "turbo", "turbo_multiplier", "turbo_handicap", "penetrate",
-                "penetrate_bonus", "birdie_point", "eagle_point", "albatross_point"
+                "penetrate_bonus", "birdie_point", "eagle_point", "albatross_point",
+                "default_teams"
             ]:
                 if k in game_settings_in:
                     current_settings[k] = game_settings_in[k]
+
+            # If default_teams map is provided, synchronize into players
+            if "default_teams" in game_settings_in and isinstance(game_settings_in["default_teams"], dict):
+                dt_map = game_settings_in["default_teams"]
+                for p in self.data.get("players", []):
+                    if p.get("id") in dt_map:
+                        choice = dt_map[p["id"]]
+                        if choice in ("left", "right"):
+                            p["default_team"] = choice
+
+                # In TEAMS mode, also update hole team assignments in scores to match new defaults
+                if current_settings.get("game_mode") == "TEAMS" and "scores" in self.data:
+                    def_a = [p["id"] for p in self.data.get("players", []) if p.get("default_team") == "left"]
+                    def_b = [p["id"] for p in self.data.get("players", []) if p.get("default_team") == "right"]
+                    for h_key, h_data in self.data["scores"].items():
+                        if isinstance(h_data, dict):
+                            h_data["team_a"] = copy.deepcopy(def_a)
+                            h_data["team_b"] = copy.deepcopy(def_b)
 
             self.data["last_updated"] = time.time()
             self._save(self.data)

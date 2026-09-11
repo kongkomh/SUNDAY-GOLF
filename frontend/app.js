@@ -193,28 +193,36 @@ function syncHoleTeamAssignments() {
   const currCalc = calcHoles.find(h => h.hole === hNum);
   const players = state.tournament.players || [];
   const validPlayerIds = new Set(players.map(p => p.id));
+  const rawMode = String(state.tournament.game_settings?.game_mode || 'TEAMS').toUpperCase();
+  const isWolf = (rawMode === 'WOLF');
+  const isFFA = (rawMode === 'FREE_FOR_ALL' || rawMode === 'FFA');
 
-  if (currCalc && (currCalc.team_a || currCalc.team_b)) {
-    state.teamA = (currCalc.team_a || []).filter(id => validPlayerIds.has(id));
-    state.teamB = (currCalc.team_b || []).filter(id => validPlayerIds.has(id));
-    // Assign any unassigned players to team B
-    players.forEach(p => {
-      if (!state.teamA.includes(p.id) && !state.teamB.includes(p.id)) {
-        state.teamB.push(p.id);
-      }
-    });
-  } else {
-    const isWolf = (state.tournament.game_settings?.game_mode === 'WOLF');
-    if (isWolf) {
+  if (isFFA) {
+    state.teamA = [];
+    state.teamB = [];
+    return;
+  }
+
+  if (isWolf) {
+    if (currCalc && (currCalc.team_a || currCalc.team_b)) {
+      state.teamA = (currCalc.team_a || []).filter(id => validPlayerIds.has(id));
+      state.teamB = (currCalc.team_b || []).filter(id => validPlayerIds.has(id));
+      players.forEach(p => {
+        if (!state.teamA.includes(p.id) && !state.teamB.includes(p.id)) {
+          state.teamB.push(p.id);
+        }
+      });
+    } else {
       const wolfIdx = (hNum - 1) % players.length;
       state.teamA = [players[wolfIdx]?.id || 'p1'];
       state.teamB = players.filter((_, idx) => idx !== wolfIdx).map(p => p.id);
-    } else {
-      state.teamA = players.length >= 4 
-        ? [players[0]?.id || 'p1', players[1]?.id || 'p2']
-        : [players[0]?.id || 'p1'];
-      state.teamB = players.filter(p => !state.teamA.includes(p.id)).map(p => p.id);
     }
+  } else {
+    // TEAMS MODE: Place players on either Left or Right team for all holes based on default_team setting
+    const defaultLeft = players.filter(p => (p.default_team || 'left') === 'left').map(p => p.id);
+    const defaultRight = players.filter(p => p.default_team === 'right').map(p => p.id);
+    state.teamA = defaultLeft.length > 0 ? [...defaultLeft] : [players[0]?.id || 'p1'];
+    state.teamB = defaultRight.length > 0 ? [...defaultRight] : players.filter(p => !state.teamA.includes(p.id)).map(p => p.id);
   }
 }
 
@@ -264,14 +272,26 @@ function renderHeader() {
   if (!state.tournament) return;
   const t = state.tournament;
   const settings = t.game_settings || {};
-  const isWolf = (settings.game_mode === 'WOLF');
+  const rawMode = String(settings.game_mode || 'TEAMS').toUpperCase();
+  const isWolf = (rawMode === 'WOLF');
+  const isFFA = (rawMode === 'FREE_FOR_ALL' || rawMode === 'FFA');
+
+  let modeBadgeClass = 'bg-amber-500/20 text-amber-300 border border-amber-500/30';
+  let modeBadgeText = 'TEAMS';
+  if (isWolf) {
+    modeBadgeClass = 'bg-purple-500/20 text-purple-300 border border-purple-500/30';
+    modeBadgeText = '🐺 WOLF';
+  } else if (isFFA) {
+    modeBadgeClass = 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    modeBadgeText = 'FREE-FOR-ALL';
+  }
 
   const nameEl = document.getElementById('header-tournament-name');
   if (nameEl) {
     nameEl.innerHTML = `
       <span class="truncate">${t.tournament_name || 'Sunday Golf Match'}</span>
-      <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black ${isWolf ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'}">
-        ${isWolf ? '🐺 WOLF' : 'NORMAL'}
+      <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black ${modeBadgeClass}">
+        ${modeBadgeText}
       </span>
     `;
   }
@@ -328,7 +348,9 @@ function renderScoringTab() {
   const currCalc = calcHoles.find(h => h.hole === hNum);
 
   const settings = t.game_settings || {};
-  const isWolf = (settings.game_mode === 'WOLF');
+  const rawMode = String(settings.game_mode || 'TEAMS').toUpperCase();
+  const isWolf = (rawMode === 'WOLF');
+  const isFFA = (rawMode === 'FREE_FOR_ALL' || rawMode === 'FFA');
   const isThai = isThaiMode();
 
   // 1. Hole Title & Par Info
@@ -343,30 +365,46 @@ function renderScoringTab() {
   // 2. Carousel
   renderHoleCarousel(holes, calcHoles);
 
-  // 3. Hand Count Info Badge
+  // 3. Hand Count Info Badge & Instruction Hints
   const handBadge = document.getElementById('hand-count-info-badge');
-  if (handBadge) {
-    const hands = Math.min(settings.hand_count || 2, state.teamA.length, state.teamB.length) || 1;
-    handBadge.textContent = isWolf && state.teamA.length === 1 
-      ? `Lone Wolf (1 Ball Match)` 
-      : `Best ${hands} Ball${hands > 1 ? 's' : ''}`;
+  const hintText = document.getElementById('instruction-hint-text');
+  const splitWrapper = document.getElementById('split-teams-wrapper');
+  const ffaWrapper = document.getElementById('ffa-wrapper');
+
+  if (isFFA) {
+    if (handBadge) handBadge.textContent = 'All 1v1 Pair Matchups';
+    if (hintText) hintText.textContent = 'Free-For-All: All players compete 1-on-1 against each other';
+    if (splitWrapper) splitWrapper.classList.add('hidden');
+    if (ffaWrapper) ffaWrapper.classList.remove('hidden');
+  } else {
+    if (splitWrapper) splitWrapper.classList.remove('hidden');
+    if (ffaWrapper) ffaWrapper.classList.add('hidden');
+    if (hintText) hintText.textContent = 'Drag or tap player cards to assign teams';
+    if (handBadge) {
+      const hands = Math.min(settings.hand_count || 2, state.teamA.length, state.teamB.length) || 1;
+      handBadge.textContent = isWolf && state.teamA.length === 1 
+        ? `Lone Wolf (1 Ball Match)` 
+        : `Best ${hands} Ball${hands > 1 ? 's' : ''}`;
+    }
   }
 
-  // 4. Hole Status Banner (Turbo, Angel Wings, Wolf Indicator)
-  renderHoleStatusBanner(hNum, hSpec, currCalc, isWolf, isThai, settings);
+  // 4. Hole Status Banner (Turbo, Angel Wings, Wolf/FFA Indicator)
+  renderHoleStatusBanner(hNum, hSpec, currCalc, isWolf, isFFA, isThai, settings);
 
-  // 5. Team A & Team B Titles
-  const teamATitle = document.getElementById('team-a-title');
-  const teamBTitle = document.getElementById('team-b-title');
-  if (teamATitle) {
-    teamATitle.innerHTML = isWolf ? `<span>🐺 WOLF</span>` : `<span>Team A</span>`;
+  // 5. Team Titles & Player Cards Rendering
+  if (isFFA) {
+    renderFFAScoringView(currCalc, hSpec, isThai);
+  } else {
+    const teamATitle = document.getElementById('team-a-title');
+    const teamBTitle = document.getElementById('team-b-title');
+    if (teamATitle) {
+      teamATitle.innerHTML = isWolf ? `<span>🐺 WOLF</span>` : `<span>Left Team</span>`;
+    }
+    if (teamBTitle) {
+      teamBTitle.innerHTML = isWolf ? `<span>🐑 SHEEP</span>` : `<span>Right Team</span>`;
+    }
+    renderTeamPlayerCards(currCalc, hSpec, isThai);
   }
-  if (teamBTitle) {
-    teamBTitle.innerHTML = isWolf ? `<span>🐑 SHEEP</span>` : `<span>Team B</span>`;
-  }
-
-  // 6. Render Team Player Cards
-  renderTeamPlayerCards(currCalc, hSpec, isThai);
 
   // 7. Render Scoring Action Bar
   renderScoringActionBar(hNum, currCalc);
@@ -423,7 +461,7 @@ function selectHole(hNum) {
   initIcons();
 }
 
-function renderHoleStatusBanner(hNum, hSpec, currCalc, isWolf, isThai, settings) {
+function renderHoleStatusBanner(hNum, hSpec, currCalc, isWolf, isFFA, isThai, settings) {
   const banner = document.getElementById('hole-status-banner');
   if (!banner) return;
 
@@ -455,6 +493,8 @@ function renderHoleStatusBanner(hNum, hSpec, currCalc, isWolf, isThai, settings)
         <span class="text-slate-500 text-[10px]">(Tees off last)</span>
       </span>
     `;
+  } else if (isFFA) {
+    modeTxt = `<span class="text-[11px] font-extrabold text-emerald-400">⚔️ Free-For-All Match • Hole ${hNum}</span>`;
   } else {
     modeTxt = `<span class="text-[11px] font-bold text-slate-400">Match Hole ${hNum}</span>`;
   }
@@ -526,6 +566,180 @@ function renderTeamPlayerCards(currCalc, hSpec, isThai) {
 
   teamAList.innerHTML = teamAPlayers.map(p => renderPlayerCardHtml(p, 'team_a', isLocked, currCalc, par, isThai)).join('');
   teamBList.innerHTML = teamBPlayers.map(p => renderPlayerCardHtml(p, 'team_b', isLocked, currCalc, par, isThai)).join('');
+}
+
+function renderFFAScoringView(currCalc, hSpec, isThai) {
+  const ffaList = document.getElementById('ffa-players-list');
+  const matchupsList = document.getElementById('ffa-matchups-list');
+  const ffaBadge = document.getElementById('ffa-player-count-badge');
+  const comboCountEl = document.getElementById('ffa-combo-count');
+
+  if (!ffaList || !state.tournament) return;
+
+  const players = state.tournament.players || [];
+  const hNum = state.currentHole;
+  const par = hSpec.par || 4;
+
+  const existingScores = currCalc?.scores || {};
+  const isHolePlayed = existingScores && Object.keys(existingScores).length > 0;
+  const unlockKey = `${hNum}`;
+  const isUnlocked = Boolean(state.unlockedHoles[unlockKey]);
+  const isLocked = isHolePlayed && !isUnlocked;
+
+  const hcpPlayerIds = new Set((currCalc?.handicap_players || []).map(p => p.id));
+  const curr = state.tournament?.game_settings?.currency || 'THB';
+  const cashPerPoint = state.tournament?.game_settings?.cash_per_point || 100;
+
+  if (ffaBadge) {
+    ffaBadge.textContent = `${players.length} Players Competing`;
+  }
+
+  // Build player objects with scores
+  const ffaPlayers = players.map(p => {
+    let score = par;
+    if (state.localScores[p.id] !== undefined) score = state.localScores[p.id];
+    else if (existingScores[p.id] !== undefined) score = existingScores[p.id];
+    const hasHcp = hcpPlayerIds.has(p.id);
+    const net = hasHcp ? score - 1 : score;
+    const ptsDelta = currCalc?.match?.point_deltas?.[p.id];
+    const cashDelta = (ptsDelta !== undefined) ? ptsDelta * cashPerPoint : null;
+    return { ...p, score, net, hasHcp, ptsDelta, cashDelta };
+  });
+
+  // Sort lowest net score first, then raw score
+  ffaPlayers.sort((a, b) => a.net - b.net || a.score - b.score);
+
+  // Render player cards
+  ffaList.innerHTML = ffaPlayers.map(p => {
+    const disabledAttr = isLocked ? 'disabled' : '';
+    const lockedOpacity = isLocked ? 'opacity-70' : '';
+
+    let deltaHtml = '';
+    if (p.cashDelta !== null && currCalc?.match?.played) {
+      const cashStr = formatCash(p.cashDelta, curr);
+      const cashClass = p.cashDelta > 0 
+        ? 'text-emerald-400 bg-emerald-950/80 border-emerald-600/50' 
+        : (p.cashDelta < 0 ? 'text-rose-400 bg-rose-950/80 border-rose-600/50' : 'text-slate-300 bg-slate-800 border-slate-700');
+
+      let bonusIcons = '';
+      const isTurboHole = Boolean(currCalc.is_turbo || currCalc.match?.is_turbo) && Boolean(state.tournament?.game_settings?.turbo);
+      if (isTurboHole && p.ptsDelta > 0) {
+        bonusIcons += `<span class="text-xs shrink-0" title="Turbo">🔥</span>`;
+      }
+      const scoreDiff = p.score - par;
+      if (scoreDiff <= -3) bonusIcons += `<span class="text-xs shrink-0" title="Albatross">🪿</span>`;
+      else if (scoreDiff === -2) bonusIcons += `<span class="text-xs shrink-0" title="Eagle">🦅</span>`;
+      else if (scoreDiff === -1) bonusIcons += `<span class="text-xs shrink-0" title="Birdie">🐦</span>`;
+
+      deltaHtml = `
+        <div class="flex items-center gap-1">
+          ${bonusIcons ? `<span class="flex items-center gap-0.5">${bonusIcons}</span>` : ''}
+          <span class="text-[10px] font-mono font-black px-2 py-0.5 rounded border ${cashClass}">${cashStr}</span>
+        </div>
+      `;
+    }
+
+    const wingIcon = p.hasHcp 
+      ? `<span class="text-sky-300 text-xs" title="${isThai ? 'TOR -1 stroke applied' : 'Handicap -1 stroke applied'}">🪽</span>` 
+      : '';
+
+    return `
+      <div id="player-card-${p.id}" class="p-2.5 sm:p-3 rounded-2xl bg-slate-950 border border-slate-800 shadow-md ${lockedOpacity} space-y-2">
+        <div class="flex items-center justify-between gap-1.5 min-w-0">
+          <div class="flex items-center gap-2 min-w-0 truncate">
+            <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm border border-white/30" style="background-color: ${p.color};"></span>
+            <span class="text-xs sm:text-sm font-black text-white truncate">${p.name}</span>
+            ${wingIcon}
+          </div>
+          <div class="shrink-0">
+            ${deltaHtml}
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-2 bg-slate-900/80 p-1.5 rounded-xl border border-slate-800/80">
+          <div class="text-[10px] font-bold text-slate-400 pl-1">
+            <span>Score: <strong class="text-white">${p.score}</strong></span>
+            ${p.hasHcp ? `<span class="block text-[10px] text-sky-400 font-extrabold leading-none">Net: <strong>${p.net}</strong></span>` : ''}
+          </div>
+
+          <div class="vertical-score-dial flex items-center gap-1.5">
+            <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', -1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none">
+              −
+            </button>
+            <div class="w-10 h-8 rounded-lg bg-slate-950 border-2 border-emerald-500/80 flex items-center justify-center text-sm font-black text-white font-mono shadow-inner">
+              ${p.score}
+            </div>
+            <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', 1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none">
+              +
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Render 1v1 Pairwise Matchups Breakdown
+  if (matchupsList) {
+    const matchups = currCalc?.match?.matchups || [];
+    const totalCombos = Math.round((players.length * (players.length - 1)) / 2);
+    if (comboCountEl) {
+      comboCountEl.textContent = `${matchups.length || totalCombos} combinations`;
+    }
+
+    if (matchups.length > 0) {
+      matchupsList.innerHTML = matchups.map(m => {
+        const isTie = (m.winner_id === 'tie' || m.points === 0);
+        let resultHtml = '';
+        if (isTie) {
+          resultHtml = `<span class="text-[10px] font-bold text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">Tied (0)</span>`;
+        } else {
+          const winnerName = (m.winner_id === m.p1_id) ? m.p1_name : m.p2_name;
+          resultHtml = `
+            <span class="text-[10px] font-black text-emerald-400 px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700/50">
+              ${winnerName} (+${m.points} pt${m.points > 1 ? 's' : ''})
+            </span>
+          `;
+        }
+
+        return `
+          <div class="ffa-matchup-item flex items-center justify-between gap-1.5 min-w-0">
+            <div class="flex items-center gap-1 min-w-0 truncate text-[11px] font-bold text-slate-300">
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${m.p1_color};"></span>
+              <span class="truncate text-white font-extrabold max-w-[60px]">${m.p1_name}</span>
+              <span class="text-slate-500 text-[10px]">(${m.p1_net})</span>
+              <span class="text-amber-400 font-mono font-bold text-[10px]">vs</span>
+              <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${m.p2_color};"></span>
+              <span class="truncate text-white font-extrabold max-w-[60px]">${m.p2_name}</span>
+              <span class="text-slate-500 text-[10px]">(${m.p2_net})</span>
+            </div>
+            <div class="shrink-0">
+              ${resultHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      // Preview pairwise combinations
+      const previewPairs = [];
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          previewPairs.push([players[i], players[j]]);
+        }
+      }
+      matchupsList.innerHTML = previewPairs.map(([p1, p2]) => `
+        <div class="ffa-matchup-item flex items-center justify-between gap-1.5 min-w-0">
+          <div class="flex items-center gap-1.5 min-w-0 truncate text-[11px] font-bold text-slate-300">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p1.color};"></span>
+            <span class="truncate text-white font-extrabold">${p1.name}</span>
+            <span class="text-amber-400 font-mono font-bold text-[10px]">vs</span>
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p2.color};"></span>
+            <span class="truncate text-white font-extrabold">${p2.name}</span>
+          </div>
+          <span class="text-[10px] text-slate-500 font-medium">Pending</span>
+        </div>
+      `).join('');
+    }
+  }
 }
 
 function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
@@ -1063,7 +1277,15 @@ function renderLeaderboard() {
   if (lbTitle) lbTitle.textContent = `${t.tournament_name || 'Sunday Golf Match'} Leaderboard`;
 
   const lbMode = document.getElementById('lb-mode-txt');
-  if (lbMode) lbMode.textContent = isWolf ? '🐺 WOLF GAME' : 'NORMAL MATCH';
+  if (lbMode) {
+    if (isWolf) {
+      lbMode.textContent = '🐺 WOLF GAME';
+    } else if (settings.game_mode === 'FREE_FOR_ALL' || settings.game_mode === 'FFA') {
+      lbMode.textContent = 'FREE-FOR-ALL MATCH';
+    } else {
+      lbMode.textContent = 'TEAMS MATCH';
+    }
+  }
 
   const lbCourse = document.getElementById('lb-course-txt');
   if (lbCourse) lbCourse.textContent = t.course_name || 'Krungthep Kreetha';
@@ -1134,7 +1356,7 @@ function renderSettingsForms() {
   if (tournInp) tournInp.value = t.tournament_name || 'Sunday Golf Match';
 
   // Game Mode Buttons
-  setGameModeUI(settings.game_mode || 'NORMAL');
+  setGameModeUI(settings.game_mode || 'TEAMS');
 
   // Hand count, Cash, Currency
   const handInp = document.getElementById('cfg-hand-count');
@@ -1182,6 +1404,7 @@ function renderSettingsForms() {
   const countPill = document.getElementById('lineup-count-pill');
   if (countPill) countPill.textContent = `${players.length || 4} Players`;
   renderPlayerLineupCards(players);
+  renderDefaultTeamsBox();
 
   // Course Holes Table
   renderCourseHolesTable();
@@ -1207,21 +1430,123 @@ function setGameMode(mode) {
 }
 
 function setGameModeUI(mode) {
-  const isWolf = (mode === 'WOLF');
-  const btnNorm = document.getElementById('btn-mode-normal');
+  const rawMode = String(mode || 'TEAMS').toUpperCase();
+  const isWolf = (rawMode === 'WOLF');
+  const isFFA = (rawMode === 'FREE_FOR_ALL' || rawMode === 'FFA');
+  const isTeams = (!isWolf && !isFFA);
+
+  const btnTeams = document.getElementById('btn-mode-teams');
+  const btnFfa = document.getElementById('btn-mode-ffa');
   const btnWolf = document.getElementById('btn-mode-wolf');
   const helpTxt = document.getElementById('mode-help-text');
 
-  if (btnNorm && btnWolf) {
+  const defTeamsBox = document.getElementById('default-teams-box');
+  const handCountBox = document.getElementById('hand-count-box');
+  const penBox = document.getElementById('penetrate-box');
+
+  const inactiveBtnClass = "py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-slate-900 text-slate-400 border-slate-700 hover:text-white";
+
+  if (btnTeams) {
+    btnTeams.className = isTeams 
+      ? "py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-amber-500 text-slate-950 border-amber-400 shadow-md" 
+      : inactiveBtnClass;
+  }
+  if (btnFfa) {
+    btnFfa.className = isFFA 
+      ? "py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-emerald-500 text-slate-950 border-emerald-400 shadow-md" 
+      : inactiveBtnClass;
+  }
+  if (btnWolf) {
+    btnWolf.className = isWolf 
+      ? "py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-purple-600 text-white border-purple-400 shadow-md" 
+      : inactiveBtnClass;
+  }
+
+  if (helpTxt) {
     if (isWolf) {
-      btnWolf.className = "py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-purple-600 text-white border-purple-400 shadow-md";
-      btnNorm.className = "py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-slate-900 text-slate-400 border-slate-700 hover:text-white";
-      if (helpTxt) helpTxt.textContent = "In Wolf mode, each player is the Wolf in rotation (tees off last) and can pick 1 partner or go Lone Wolf.";
+      helpTxt.textContent = "In Wolf mode, each player is the Wolf in rotation (tees off last) and can pick 1 partner or go Lone Wolf.";
+    } else if (isFFA) {
+      helpTxt.textContent = "In Free-For-All mode, all players compete 1-on-1 against each other across all pairings on every hole.";
     } else {
-      btnNorm.className = "py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-amber-500 text-slate-950 border-amber-400 shadow-md";
-      btnWolf.className = "py-2.5 px-3 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1.5 bg-slate-900 text-slate-400 border-slate-700 hover:text-white";
-      if (helpTxt) helpTxt.textContent = "In Normal mode, teams can be freely assigned or copied from hole to hole.";
+      helpTxt.textContent = "In Teams mode, players are divided into Left (Team A) and Right (Team B) teams for hole-by-hole match play.";
     }
+  }
+
+  if (defTeamsBox) {
+    if (isTeams) defTeamsBox.classList.remove('hidden');
+    else defTeamsBox.classList.add('hidden');
+  }
+
+  if (handCountBox) {
+    if (isFFA) handCountBox.classList.add('hidden');
+    else handCountBox.classList.remove('hidden');
+  }
+
+  if (penBox) {
+    if (isFFA) penBox.classList.add('hidden');
+    else penBox.classList.remove('hidden');
+  }
+}
+
+function renderDefaultTeamsBox() {
+  const container = document.getElementById('default-teams-player-list');
+  if (!container || !state.tournament) return;
+
+  const players = state.tournament.players || [];
+  container.innerHTML = players.map(p => {
+    const team = p.default_team || 'left';
+    const isLeft = (team === 'left');
+    const isRight = (team === 'right');
+
+    return `
+      <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 shadow-sm">
+        <div class="flex items-center gap-2 min-w-0 pr-1">
+          <span class="w-3.5 h-3.5 rounded-full shrink-0 border border-white/40 shadow-sm" style="background-color: ${p.color};"></span>
+          <span class="font-black text-white text-xs truncate">${p.name}</span>
+        </div>
+        <div class="team-toggle-group shrink-0">
+          <button type="button" onclick="togglePlayerDefaultTeam('${p.id}', 'left')" class="team-toggle-btn ${isLeft ? 'active-left' : ''}">Left</button>
+          <button type="button" onclick="togglePlayerDefaultTeam('${p.id}', 'right')" class="team-toggle-btn ${isRight ? 'active-right' : ''}">Right</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function togglePlayerDefaultTeam(playerId, team) {
+  if (!state.tournament || !state.tournament.players) return;
+  const player = state.tournament.players.find(p => p.id === playerId);
+  if (!player) return;
+
+  player.default_team = team;
+  renderDefaultTeamsBox();
+
+  // Instantly re-align scoring tab teams
+  syncHoleTeamAssignments();
+  renderScoringTab();
+
+  // Persist default_teams map to server
+  const defaultTeamsMap = {};
+  state.tournament.players.forEach(p => {
+    defaultTeamsMap[p.id] = p.default_team || 'left';
+  });
+
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game_settings: {
+          default_teams: defaultTeamsMap
+        }
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      updateTournamentState(data);
+    }
+  } catch (err) {
+    console.error("Error updating default teams:", err);
   }
 }
 
@@ -1278,12 +1603,17 @@ function onPlayerCountChanged(val) {
         name: DEFAULT_NAMES[i],
         color: DEFAULT_COLORS[i],
         hcp_out: 0,
-        hcp_in: 0
+        hcp_in: 0,
+        default_team: i < Math.ceil(count / 2) ? 'left' : 'right'
       });
     }
   }
 
   renderPlayerLineupCards(newPlayers);
+  if (state.tournament) {
+    state.tournament.players = newPlayers;
+  }
+  renderDefaultTeamsBox();
 }
 
 function renderPlayerLineupCards(players) {
@@ -1329,6 +1659,7 @@ function renderPlayerLineupCards(players) {
 async function savePlayersLineup() {
   const countInp = document.getElementById('cfg-player-count');
   const count = Math.max(3, Math.min(6, parseInt(countInp?.value) || 4));
+  const currentPlayers = state.tournament?.players || [];
 
   const playersPayload = [];
   for (let i = 0; i < count; i++) {
@@ -1336,13 +1667,16 @@ async function savePlayersLineup() {
     const color = document.getElementById(`p-col-${i}`)?.value || DEFAULT_COLORS[i];
     const hcpOut = parseInt(document.getElementById(`p-out-${i}`)?.value) || 0;
     const hcpIn = parseInt(document.getElementById(`p-in-${i}`)?.value) || 0;
+    const existing = currentPlayers[i] || {};
+    const defaultTeam = existing.default_team || (i < Math.ceil(count / 2) ? 'left' : 'right');
 
     playersPayload.push({
       id: `p${i + 1}`,
       name: name,
       color: color,
       hcp_out: hcpOut,
-      hcp_in: hcpIn
+      hcp_in: hcpIn,
+      default_team: defaultTeam
     });
   }
 
@@ -1366,6 +1700,11 @@ async function savePlayersLineup() {
 async function saveGameSettings() {
   const title = document.getElementById('cfg-tourn-title')?.value.trim() || 'Sunday Golf Match';
   const isWolf = document.getElementById('btn-mode-wolf')?.classList.contains('bg-purple-600');
+  const isFFA = document.getElementById('btn-mode-ffa')?.classList.contains('bg-emerald-500');
+  let gameMode = 'TEAMS';
+  if (isWolf) gameMode = 'WOLF';
+  else if (isFFA) gameMode = 'FREE_FOR_ALL';
+
   const handCount = parseInt(document.getElementById('cfg-hand-count')?.value) || 2;
   const cashPerPoint = parseInt(document.getElementById('cfg-cash-per-point')?.value) || 100;
   const currency = document.getElementById('cfg-currency')?.value || 'THB';
@@ -1378,10 +1717,15 @@ async function saveGameSettings() {
   const eagleBonus = parseInt(document.getElementById('cfg-eagle-point')?.value) || 3;
   const albatrossBonus = parseInt(document.getElementById('cfg-albatross-point')?.value) || 4;
 
+  const defaultTeamsMap = {};
+  (state.tournament?.players || []).forEach(p => {
+    defaultTeamsMap[p.id] = p.default_team || 'left';
+  });
+
   const payload = {
     tournament_name: title,
     game_settings: {
-      game_mode: isWolf ? 'WOLF' : 'NORMAL',
+      game_mode: gameMode,
       hand_count: handCount,
       cash_per_point: cashPerPoint,
       currency: currency,
@@ -1392,7 +1736,8 @@ async function saveGameSettings() {
       penetrate_bonus: penetrateBonus,
       birdie_point: birdieBonus,
       eagle_point: eagleBonus,
-      albatross_point: albatrossBonus
+      albatross_point: albatrossBonus,
+      default_teams: defaultTeamsMap
     }
   };
 

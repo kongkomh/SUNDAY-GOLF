@@ -1,16 +1,18 @@
 """
 Sunday Golf Tracker - 1 Group Casual Golf Engine (3–6 Players)
-Game Modes: NORMAL & WOLF
+Game Modes: TEAMS, FREE_FOR_ALL & WOLF
 Features:
 - Handicap (TOR) Hole Allocator (OUT/IN)
 - Turbo Holes & Multipliers
 - Penetrate (Chuan) Sweep Bonus
 - Best X Balls (Hand Count) Match Resolver
+- Free-For-All All-vs-All Pairwise Combinations
 - Zero-Sum Points & Cash Distribution
 """
 
 from typing import Dict, List, Any, Optional, Set, Tuple
 import copy
+import itertools
 
 DEFAULT_PLAYERS = [
     {
@@ -18,28 +20,32 @@ DEFAULT_PLAYERS = [
         "name": "Shirobon",
         "color": "#FFFFFF",
         "hcp_out": 0,
-        "hcp_in": 0
+        "hcp_in": 0,
+        "default_team": "left"
     },
     {
         "id": "p2",
         "name": "Kurobon",
         "color": "#1E293B",
         "hcp_out": 0,
-        "hcp_in": 0
+        "hcp_in": 0,
+        "default_team": "left"
     },
     {
         "id": "p3",
         "name": "Akabon",
         "color": "#EF4444",
         "hcp_out": 0,
-        "hcp_in": 0
+        "hcp_in": 0,
+        "default_team": "right"
     },
     {
         "id": "p4",
         "name": "Aobon",
         "color": "#3B82F6",
         "hcp_out": 0,
-        "hcp_in": 0
+        "hcp_in": 0,
+        "default_team": "right"
     }
 ]
 
@@ -62,12 +68,12 @@ DEFAULT_PLAYER_NAMES = [
 ]
 
 DEFAULT_SETTINGS = {
-    "game_mode": "NORMAL",         # "NORMAL" or "WOLF"
+    "game_mode": "TEAMS",          # "TEAMS", "FREE_FOR_ALL", or "WOLF"
     "hand_count": 2,               # Best X Balls (1 to num_players)
     "cash_per_point": 100,         # Cash per point / hole
     "currency": "THB",             # Currency code: THB (฿), USD ($), EUR (€), etc.
     "turbo": True,                 # Turbo hole enabled (default checked)
-    "turbo_multiplier": 2,         # Multiplier on turbo holes (default 2 for NORMAL, num_players for WOLF)
+    "turbo_multiplier": 2,         # Multiplier on turbo holes (default 2 for TEAMS/FFA, num_players for WOLF)
     "turbo_handicap": False,       # Allow handicap on turbo holes (default unchecked)
     "penetrate": True,             # Penetrate / Chuan bonus enabled (default checked)
     "penetrate_bonus": 1,          # Additional point when all hands are won
@@ -420,11 +426,143 @@ def calculate_hole_points(
     }
 
 
+def calculate_ffa_hole_points(
+    hole_num: int,
+    hole_spec: Dict[str, Any],
+    player_scores: Dict[str, Optional[int]],
+    player_handicap_map: Dict[str, Set[int]],
+    settings: Dict[str, Any],
+    players: List[Dict[str, Any]],
+    players_dict: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Calculates Free-For-All (FFA) point outcome for a single hole.
+    Every player pitches against every other player in pairwise combinations.
+    For N players: itertools.combinations(players, 2).
+    E.g. for ABC: A vs B, A vs C, B vs C.
+    Evaluates net scores, under-par raw tiebreakers, and turbo multipliers.
+    Points distribution is zero-sum.
+    """
+    par = int(hole_spec.get("par", 4))
+    is_turbo = bool(hole_spec.get("is_turbo", False))
+    turbo_enabled = bool(settings.get("turbo", False))
+    turbo_mult = int(settings.get("turbo_multiplier", 2) or 2)
+
+    # Collect player data for this hole
+    player_data = []
+    for p in players:
+        pid = p["id"]
+        raw_score = player_scores.get(pid)
+        if raw_score is not None:
+            has_hcp = (hole_num in player_handicap_map.get(pid, set()))
+            net_score = (raw_score - 1) if has_hcp else raw_score
+            player_data.append({
+                "id": pid,
+                "player": p,
+                "name": p.get("name", pid),
+                "color": p.get("color", "#F59E0B"),
+                "raw_score": raw_score,
+                "net_score": net_score,
+                "has_hcp": has_hcp
+            })
+
+    # If not all players have scores or fewer than 2 players with scores, not played
+    if len(player_data) < len(players) or len(player_data) < 2:
+        return {
+            "played": False,
+            "game_mode": "FREE_FOR_ALL",
+            "is_turbo": is_turbo,
+            "won_point": 0,
+            "matchups": [],
+            "point_deltas": {p["id"]: 0.0 for p in players},
+            "sorted_players": player_data
+        }
+
+    # Sort players by lowest net score, then raw score
+    sorted_players = sorted(player_data, key=lambda p: (p["net_score"], p["raw_score"]))
+
+    point_deltas: Dict[str, float] = {p["id"]: 0.0 for p in players}
+    matchup_details = []
+
+    # Loop through all 2-player combinations in player order
+    for p_a, p_b in itertools.combinations(player_data, 2):
+        raw_a = p_a["raw_score"]
+        raw_b = p_b["raw_score"]
+        net_a = p_a["net_score"]
+        net_b = p_b["net_score"]
+        w_a = get_raw_score_weight(raw_a, par, settings)
+        w_b = get_raw_score_weight(raw_b, par, settings)
+
+        winner = "tie"
+        pts = 0
+        reason = "net_score"
+
+        # 1. Net score comparison
+        if net_a < net_b:
+            winner = p_a["id"]
+            pts = w_a
+        elif net_b < net_a:
+            winner = p_b["id"]
+            pts = w_b
+        else:
+            # 2. Tied Net score: Under-par raw tiebreaker
+            if raw_a != raw_b and min(raw_a, raw_b) < par:
+                if raw_a < raw_b:
+                    winner = p_a["id"]
+                    pts = w_a - w_b
+                    reason = "raw_underpar_bonus"
+                else:
+                    winner = p_b["id"]
+                    pts = w_b - w_a
+                    reason = "raw_underpar_bonus"
+            else:
+                winner = "tie"
+                pts = 0
+                reason = "tie"
+
+        # Apply turbo multiplier if turbo hole
+        if turbo_enabled and is_turbo and pts > 0:
+            pts = pts * turbo_mult
+
+        if winner == p_a["id"]:
+            point_deltas[p_a["id"]] += float(pts)
+            point_deltas[p_b["id"]] -= float(pts)
+        elif winner == p_b["id"]:
+            point_deltas[p_b["id"]] += float(pts)
+            point_deltas[p_a["id"]] -= float(pts)
+
+        matchup_details.append({
+            "p1_id": p_a["id"],
+            "p1_name": p_a["name"],
+            "p1_color": p_a["color"],
+            "p1_raw": raw_a,
+            "p1_net": net_a,
+            "p2_id": p_b["id"],
+            "p2_name": p_b["name"],
+            "p2_color": p_b["color"],
+            "p2_raw": raw_b,
+            "p2_net": net_b,
+            "winner_id": winner,
+            "points": pts,
+            "reason": reason
+        })
+
+    return {
+        "played": True,
+        "game_mode": "FREE_FOR_ALL",
+        "is_turbo": is_turbo,
+        "won_point": max(point_deltas.values()) if point_deltas else 0,
+        "matchups": matchup_details,
+        "point_deltas": point_deltas,
+        "sorted_players": sorted_players
+    }
+
+
 def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Computes full tournament/game state for the single group Sunday golf tracker:
     - 3 to 6 Players
-    - Normal or Wolf Game Modes
+    - TEAMS, FREE_FOR_ALL, or WOLF Game Modes
     - Hole-by-hole scores, net scores, handicap assignments
     - Points and Cash calculations
     - Momentum tracking and Leaderboard
@@ -436,6 +574,15 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
     # Game Settings
     settings = copy.deepcopy(DEFAULT_SETTINGS)
     settings.update(data.get("game_settings") or {})
+    raw_mode = str(settings.get("game_mode", "TEAMS")).upper()
+    if raw_mode in ("NORMAL", "TEAMS"):
+        settings["game_mode"] = "TEAMS"
+    elif raw_mode in ("FREE_FOR_ALL", "FFA", "FREE-FOR-ALL"):
+        settings["game_mode"] = "FREE_FOR_ALL"
+    elif raw_mode == "WOLF":
+        settings["game_mode"] = "WOLF"
+    else:
+        settings["game_mode"] = "TEAMS"
 
     # Players (ensure 3 to 6 players with valid colors & defaults)
     raw_players = data.get("players") or copy.deepcopy(DEFAULT_PLAYERS)
@@ -449,26 +596,50 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
         p_color = p.get("color") or DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)]
         p_out = int(p.get("hcp_out", 0) or 0)
         p_in = int(p.get("hcp_in", 0) or 0)
+        p_def_team = p.get("default_team")
+        if p_def_team not in ("left", "right"):
+            p_def_team = "left" if idx < (len(raw_players) // 2) else "right"
         players.append({
             "id": p_id,
             "name": p_name,
             "color": p_color,
             "hcp_out": max(0, p_out),
-            "hcp_in": max(0, p_in)
+            "hcp_in": max(0, p_in),
+            "default_team": p_def_team
         })
 
     # Ensure minimum 3 players
     while len(players) < 3:
         idx = len(players)
+        p_def_team = "left" if idx < 2 else "right"
         players.append({
             "id": f"p{idx+1}",
             "name": DEFAULT_PLAYER_NAMES[min(idx, len(DEFAULT_PLAYER_NAMES)-1)],
             "color": DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)],
             "hcp_out": 0,
-            "hcp_in": 0
+            "hcp_in": 0,
+            "default_team": p_def_team
         })
 
+    # Synchronize default teams from settings if explicit map provided
+    if isinstance(settings.get("default_teams"), dict):
+        for p in players:
+            if p["id"] in settings["default_teams"]:
+                team_choice = settings["default_teams"][p["id"]]
+                if team_choice in ("left", "right"):
+                    p["default_team"] = team_choice
+
     players_dict = {p["id"]: p for p in players}
+
+    # Determine default Left and Right teams from player default_team setting
+    cfg_default_team_a = [p["id"] for p in players if p.get("default_team") == "left"]
+    cfg_default_team_b = [p["id"] for p in players if p.get("default_team") == "right"]
+    if not cfg_default_team_a and players:
+        cfg_default_team_a = [players[0]["id"]]
+        cfg_default_team_b = [p["id"] for p in players[1:]]
+    elif not cfg_default_team_b and len(players) > 1:
+        cfg_default_team_b = [players[-1]["id"]]
+        cfg_default_team_a = [p["id"] for p in players[:-1]]
 
     # Adjust Turbo multiplier default for WOLF mode if not explicitly set
     if settings.get("game_mode") == "WOLF":
@@ -509,8 +680,8 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
     player_hole_cash: Dict[str, Dict[str, Optional[float]]] = {p["id"]: {} for p in players}
 
     cash_per_point = int(settings.get("cash_per_point", 100) or 100)
-    last_team_a = [players[0]["id"], players[1]["id"]] if len(players) >= 4 else [players[0]["id"]]
-    last_team_b = [p["id"] for p in players if p["id"] not in last_team_a]
+    last_team_a = copy.deepcopy(cfg_default_team_a)
+    last_team_b = copy.deepcopy(cfg_default_team_b)
 
     max_thru = 0
 
@@ -526,9 +697,14 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
             default_team_b = wolf_info["default_team_b"]
             wolf_player = wolf_info["wolf"]
             tee_order = wolf_info["tee_order"]
+        elif settings.get("game_mode") == "FREE_FOR_ALL":
+            default_team_a = []
+            default_team_b = []
+            wolf_player = None
+            tee_order = players
         else:
-            default_team_a = copy.deepcopy(last_team_a)
-            default_team_b = copy.deepcopy(last_team_b)
+            default_team_a = copy.deepcopy(cfg_default_team_a)
+            default_team_b = copy.deepcopy(cfg_default_team_b)
             wolf_player = None
             tee_order = players
 
@@ -536,7 +712,10 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
         raw_team_a = h_entry.get("team_a")
         raw_team_b = h_entry.get("team_b")
 
-        if raw_team_a is not None and raw_team_b is not None:
+        if settings.get("game_mode") == "FREE_FOR_ALL":
+            team_a_ids = []
+            team_b_ids = []
+        elif raw_team_a is not None and raw_team_b is not None:
             team_a_ids = [pid for pid in raw_team_a if pid in players_dict]
             team_b_ids = [pid for pid in raw_team_b if pid in players_dict]
             # Ensure all players in players_dict are assigned
@@ -549,22 +728,33 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
 
         hole_scores_dict = h_entry.get("scores") or {}
 
-        # Save team assignment for subsequent holes in normal mode
+        # Save team assignment for subsequent holes in TEAMS mode if custom
         if team_a_ids and team_b_ids:
             last_team_a = team_a_ids
             last_team_b = team_b_ids
 
-        # Compute point match
-        h_match = calculate_hole_points(
-            h_num,
-            h_spec,
-            team_a_ids,
-            team_b_ids,
-            hole_scores_dict,
-            player_handicap_map,
-            settings,
-            players_dict
-        )
+        # Compute match outcome for hole
+        if settings.get("game_mode") == "FREE_FOR_ALL":
+            h_match = calculate_ffa_hole_points(
+                h_num,
+                h_spec,
+                hole_scores_dict,
+                player_handicap_map,
+                settings,
+                players,
+                players_dict
+            )
+        else:
+            h_match = calculate_hole_points(
+                h_num,
+                h_spec,
+                team_a_ids,
+                team_b_ids,
+                hole_scores_dict,
+                player_handicap_map,
+                settings,
+                players_dict
+            )
 
         # Update per-player stats for this hole
         hole_played_any = False
@@ -641,6 +831,7 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
             "id": pid,
             "name": p["name"],
             "color": p["color"],
+            "default_team": p.get("default_team", "left"),
             "hcp_out": p["hcp_out"],
             "hcp_in": p["hcp_in"],
             "handicap_holes": sorted(list(player_handicap_map.get(pid, set()))),
@@ -715,6 +906,8 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
         "course_name": course_name,
         "game_settings": settings,
         "players": players,
+        "default_team_a": cfg_default_team_a,
+        "default_team_b": cfg_default_team_b,
         "holes": holes,
         "course_specs": {
             "total_par": total_par,

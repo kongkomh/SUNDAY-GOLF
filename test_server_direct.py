@@ -91,5 +91,41 @@ class TestSundayServerDirect(unittest.TestCase):
         self.assertEqual(res["course_id"], "course-custom")
         self.assertEqual(res["course_name"], "Custom Links")
 
+    def test_teams_default_teams_store(self):
+        # Update settings with TEAMS mode and default teams map
+        res = self.store.update_settings({
+            "game_settings": {
+                "game_mode": "TEAMS",
+                "default_teams": {
+                    "p1": "right",
+                    "p2": "right",
+                    "p3": "left",
+                    "p4": "left"
+                }
+            }
+        })
+        self.assertEqual(res["game_settings"]["game_mode"], "TEAMS")
+        self.assertEqual(res["default_team_a"], ["p3", "p4"])
+        self.assertEqual(res["default_team_b"], ["p1", "p2"])
+
+    def test_free_for_all_store(self):
+        # Update settings to FREE_FOR_ALL mode
+        self.store.update_settings({
+            "game_settings": {
+                "game_mode": "FREE_FOR_ALL",
+                "cash_per_point": 150
+            }
+        })
+        # Score hole 1
+        res = self.store.set_hole_scores(
+            hole_num=1,
+            score_data={"p1": 3, "p2": 4, "p3": 4, "p4": 5}
+        )
+        h1 = next(h for h in res["calculated_holes"] if h["hole"] == 1)
+        self.assertTrue(h1["match"]["played"])
+        self.assertEqual(len(h1["match"]["matchups"]), 6)
+        total_cash = sum(p["total_cash"] for p in res["player_scorecards"])
+        self.assertAlmostEqual(total_cash, 0.0)
+
 if __name__ == "__main__":
     unittest.main()

@@ -260,5 +260,162 @@ class TestSundayGolfEngine(unittest.TestCase):
         )
         self.assertEqual(h_match["won_point"], 1) # Team A won 1 point
 
+    def test_teams_mode_default_teams(self):
+        # Configure players with specific default teams: p1, p3 Left; p2, p4 Right
+        players = [
+            {"id": "p1", "name": "Shirobon", "color": "#FFFFFF", "default_team": "left"},
+            {"id": "p2", "name": "Kurobon", "color": "#1E293B", "default_team": "right"},
+            {"id": "p3", "name": "Akabon", "color": "#EF4444", "default_team": "left"},
+            {"id": "p4", "name": "Aobon", "color": "#3B82F6", "default_team": "right"}
+        ]
+        game_data = {
+            "game_settings": {
+                "game_mode": "TEAMS",
+                "hand_count": 2,
+                "cash_per_point": 100,
+                "penetrate": False,
+                "turbo": False
+            },
+            "players": players,
+            "holes": self.holes,
+            "scores": {
+                "1": {
+                    "scores": {"p1": 4, "p2": 5, "p3": 4, "p4": 5}
+                }
+            }
+        }
+        state = calculate_tournament_state(game_data)
+        self.assertEqual(state["game_settings"]["game_mode"], "TEAMS")
+        self.assertEqual(state["default_team_a"], ["p1", "p3"])
+        self.assertEqual(state["default_team_b"], ["p2", "p4"])
+        h1 = next(h for h in state["calculated_holes"] if h["hole"] == 1)
+        self.assertEqual(h1["team_a"], ["p1", "p3"])
+        self.assertEqual(h1["team_b"], ["p2", "p4"])
+        # Team Left (p1, p3) both shot 4 vs Team Right (p2, p4) both shot 5 -> Left wins!
+        p1 = next(p for p in state["player_scorecards"] if p["id"] == "p1")
+        p2 = next(p for p in state["player_scorecards"] if p["id"] == "p2")
+        self.assertEqual(p1["total_points"], 2.0)
+        self.assertEqual(p2["total_points"], -2.0)
+
+    def test_free_for_all_3_players(self):
+        # 3 players: A (p1), B (p2), C (p3) on Par 4 hole.
+        # p1: raw 3 (Birdie, weight 2)
+        # p2: raw 4 (Par, weight 1)
+        # p3: raw 5 (Bogey, weight 1)
+        # Combinations:
+        # A vs B: A wins (Birdie, 2 pts). A: +2, B: -2
+        # A vs C: A wins (Birdie, 2 pts). A: +2, C: -2
+        # B vs C: B wins (Par, 1 pt). B: +1, C: -1
+        # Net deltas:
+        # A: +4 pts
+        # B: -1 pt
+        # C: -3 pts
+        # Total: 0 (Zero-Sum!)
+        players = [
+            {"id": "p1", "name": "A", "color": "#FFFFFF", "hcp_out": 0, "hcp_in": 0},
+            {"id": "p2", "name": "B", "color": "#1E293B", "hcp_out": 0, "hcp_in": 0},
+            {"id": "p3", "name": "C", "color": "#EF4444", "hcp_out": 0, "hcp_in": 0}
+        ]
+        game_data = {
+            "game_settings": {
+                "game_mode": "FREE_FOR_ALL",
+                "cash_per_point": 100,
+                "birdie_point": 2,
+                "turbo": False
+            },
+            "players": players,
+            "holes": self.holes,
+            "scores": {
+                "1": {
+                    "scores": {"p1": 3, "p2": 4, "p3": 5}
+                }
+            }
+        }
+        state = calculate_tournament_state(game_data)
+        self.assertEqual(state["game_settings"]["game_mode"], "FREE_FOR_ALL")
+        h1 = next(h for h in state["calculated_holes"] if h["hole"] == 1)
+        self.assertTrue(h1["match"]["played"])
+        self.assertEqual(len(h1["match"]["matchups"]), 3)
+
+        p1 = next(p for p in state["player_scorecards"] if p["id"] == "p1")
+        p2 = next(p for p in state["player_scorecards"] if p["id"] == "p2")
+        p3 = next(p for p in state["player_scorecards"] if p["id"] == "p3")
+
+        self.assertEqual(p1["total_points"], 4.0)
+        self.assertEqual(p1["total_cash"], 400.0)
+        self.assertEqual(p2["total_points"], -1.0)
+        self.assertEqual(p2["total_cash"], -100.0)
+        self.assertEqual(p3["total_points"], -3.0)
+        self.assertEqual(p3["total_cash"], -300.0)
+        self.assertEqual(p1["total_points"] + p2["total_points"] + p3["total_points"], 0.0)
+
+    def test_free_for_all_4_players_zero_sum(self):
+        # 4 players: 6 pairwise combinations
+        game_data = {
+            "game_settings": {
+                "game_mode": "FREE_FOR_ALL",
+                "cash_per_point": 100,
+                "turbo": False
+            },
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {
+                "1": {
+                    "scores": {"p1": 4, "p2": 4, "p3": 5, "p4": 6}
+                }
+            }
+        }
+        state = calculate_tournament_state(game_data)
+        h1 = next(h for h in state["calculated_holes"] if h["hole"] == 1)
+        self.assertEqual(len(h1["match"]["matchups"]), 6)
+        total_pts = sum(p["total_points"] for p in state["player_scorecards"])
+        total_cash = sum(p["total_cash"] for p in state["player_scorecards"])
+        self.assertAlmostEqual(total_pts, 0.0)
+        self.assertAlmostEqual(total_cash, 0.0)
+
+    def test_free_for_all_turbo_and_tiebreaker(self):
+        # Hole 9 is a Turbo Hole (Par 4). Turbo multiplier is 3.
+        # Player p1 has handicap on H9 (if allowed) or test tiebreaker without handicap.
+        # p1: raw 3 (Birdie, weight 2)
+        # p2: raw 3 (Birdie, weight 2) -> Tie (0 pts)
+        # p3: raw 4 (Par, weight 1)
+        # p1 vs p3: p1 Birdie (2 pts) * 3 turbo = 6 pts
+        # p2 vs p3: p2 Birdie (2 pts) * 3 turbo = 6 pts
+        # p1 vs p2: Tie (0 pts)
+        # Totals: p1 = +6, p2 = +6, p3 = -12. Sum = 0!
+        players = [
+            {"id": "p1", "name": "A", "color": "#FFFFFF", "hcp_out": 0, "hcp_in": 0},
+            {"id": "p2", "name": "B", "color": "#1E293B", "hcp_out": 0, "hcp_in": 0},
+            {"id": "p3", "name": "C", "color": "#EF4444", "hcp_out": 0, "hcp_in": 0}
+        ]
+        game_data = {
+            "game_settings": {
+                "game_mode": "FREE_FOR_ALL",
+                "cash_per_point": 100,
+                "birdie_point": 2,
+                "turbo": True,
+                "turbo_multiplier": 3
+            },
+            "players": players,
+            "holes": self.holes,
+            "scores": {
+                "9": {
+                    "scores": {"p1": 3, "p2": 3, "p3": 4}
+                }
+            }
+        }
+        state = calculate_tournament_state(game_data)
+        h9 = next(h for h in state["calculated_holes"] if h["hole"] == 9)
+        self.assertTrue(h9["match"]["is_turbo"])
+        p1 = next(p for p in state["player_scorecards"] if p["id"] == "p1")
+        p2 = next(p for p in state["player_scorecards"] if p["id"] == "p2")
+        p3 = next(p for p in state["player_scorecards"] if p["id"] == "p3")
+        self.assertEqual(p1["total_points"], 6.0)
+        self.assertEqual(p2["total_points"], 6.0)
+        self.assertEqual(p3["total_points"], -12.0)
+        self.assertEqual(p1["total_cash"], 600.0)
+        self.assertEqual(p2["total_cash"], 600.0)
+        self.assertEqual(p3["total_cash"], -1200.0)
+
 if __name__ == "__main__":
     unittest.main()
