@@ -681,35 +681,31 @@ function renderFFAScoringView(currCalc, hSpec, isThai) {
       : '';
 
     return `
-      <div id="player-card-${p.id}" class="p-2.5 sm:p-3 rounded-2xl bg-slate-950 border border-slate-800 shadow-md ${lockedOpacity} space-y-2">
-        <div class="flex items-center justify-between gap-1.5 min-w-0">
-          <div class="flex items-center gap-2 min-w-0 truncate">
-            <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm border border-white/30" style="background-color: ${p.color};"></span>
-            <span class="text-xs sm:text-sm font-black text-white truncate">${p.name}</span>
-            ${wingIcon}
-          </div>
-          <div class="shrink-0">
-            ${deltaHtml}
+      <div id="player-card-${p.id}" class="p-2 sm:p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 hover:border-slate-700 shadow-sm ${lockedOpacity} flex items-center justify-between gap-2 transition">
+        <!-- Left: Color, Name, Net Badge, Delta/Cash -->
+        <div class="flex items-center gap-2 min-w-0 pr-1">
+          <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm border border-white/30" style="background-color: ${p.color};"></span>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
+              <span class="text-xs sm:text-sm font-black text-white truncate">${p.name}</span>
+              ${wingIcon}
+              ${p.hasHcp ? `<span class="text-[10px] font-extrabold text-sky-400 font-mono">Net ${p.net}</span>` : ''}
+            </div>
+            ${deltaHtml ? `<div class="mt-0.5">${deltaHtml}</div>` : ''}
           </div>
         </div>
 
-        <div class="flex items-center justify-between gap-2 bg-slate-900/80 p-1.5 rounded-xl border border-slate-800/80">
-          <div class="text-[10px] font-bold text-slate-400 pl-1">
-            <span>Score: <strong class="text-white">${p.score}</strong></span>
-            ${p.hasHcp ? `<span class="block text-[10px] text-sky-400 font-extrabold leading-none">Net: <strong>${p.net}</strong></span>` : ''}
+        <!-- Right: Horizontal Score Stepper (- on left, score center, + on right) -->
+        <div class="horizontal-score-stepper shrink-0 select-none">
+          <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', -1)" class="dial-btn w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-black text-sm flex items-center justify-center disabled:opacity-30 disabled:pointer-events-none active:scale-95 transition" title="Decrease score">
+            −
+          </button>
+          <div class="w-8 h-7 sm:w-9 sm:h-8 rounded-lg bg-slate-950 border-2 border-emerald-500/80 flex items-center justify-center text-xs sm:text-sm font-black text-white font-mono shadow-inner">
+            ${p.score}
           </div>
-
-          <div class="vertical-score-dial flex items-center gap-1.5">
-            <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', -1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none">
-              −
-            </button>
-            <div class="w-10 h-8 rounded-lg bg-slate-950 border-2 border-emerald-500/80 flex items-center justify-center text-sm font-black text-white font-mono shadow-inner">
-              ${p.score}
-            </div>
-            <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', 1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none">
-              +
-            </button>
-          </div>
+          <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', 1)" class="dial-btn w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-black text-sm flex items-center justify-center disabled:opacity-30 disabled:pointer-events-none active:scale-95 transition" title="Increase score">
+            +
+          </button>
         </div>
       </div>
     `;

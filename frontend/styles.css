@@ -59,6 +59,16 @@
   user-select: none;
 }
 
+/* Horizontal Score Stepper (- on left, score in center, + on right) */
+.horizontal-score-stepper {
+  display: inline-flex;
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  user-select: none;
+}
+
 .dial-btn {
   touch-action: manipulation;
   user-select: none;
