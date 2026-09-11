@@ -1,4 +1,7 @@
 /* Sunday Golf Tracker - Styles & Mobile Optimizations */
+html {
+  scroll-padding-top: 4.5rem;
+}
 
 /* Custom Smooth Scrollbar */
 .scrollbar-thin::-webkit-scrollbar {

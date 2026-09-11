@@ -3,12 +3,12 @@
   "course_id": "course-krungthep-kreetha",
   "course_name": "Krungthep Kreetha Golf Course",
   "game_settings": {
-    "game_mode": "FREE_FOR_ALL",
+    "game_mode": "TEAMS",
     "hand_count": 2,
-    "cash_per_point": 200,
+    "cash_per_point": 100,
     "currency": "THB",
     "turbo": true,
-    "turbo_multiplier": 5,
+    "turbo_multiplier": 2,
     "turbo_handicap": false,
     "penetrate": true,
     "penetrate_bonus": 1,
@@ -19,22 +19,21 @@
       "p1": "left",
       "p2": "left",
       "p3": "right",
-      "p4": "right",
-      "p5": "right"
+      "p4": "right"
     }
   },
   "players": [
     {
       "id": "p1",
-      "name": "Shirobon",
+      "name": "PLAYER 1",
       "color": "#FFFFFF",
-      "hcp_out": 1,
-      "hcp_in": 1,
+      "hcp_out": 0,
+      "hcp_in": 0,
       "default_team": "left"
     },
     {
       "id": "p2",
-      "name": "Kurobon",
+      "name": "PLAYER 2",
       "color": "#1E293B",
       "hcp_out": 0,
       "hcp_in": 0,
@@ -42,7 +41,7 @@
     },
     {
       "id": "p3",
-      "name": "Akabon",
+      "name": "PLAYER 3",
       "color": "#EF4444",
       "hcp_out": 0,
       "hcp_in": 0,
@@ -50,16 +49,8 @@
     },
     {
       "id": "p4",
-      "name": "Aobon",
+      "name": "PLAYER 4",
       "color": "#3B82F6",
-      "hcp_out": 2,
-      "hcp_in": 0,
-      "default_team": "right"
-    },
-    {
-      "id": "p5",
-      "name": "Midoribon",
-      "color": "#10B981",
       "hcp_out": 0,
       "hcp_in": 0,
       "default_team": "right"
@@ -69,120 +60,117 @@
     {
       "hole": 1,
       "par": 4,
-      "handicap": 7,
-      "is_turbo": false
+      "handicap": 7
     },
     {
       "hole": 2,
       "par": 4,
-      "handicap": 11,
-      "is_turbo": false
+      "handicap": 11
     },
     {
       "hole": 3,
       "par": 3,
-      "handicap": 15,
-      "is_turbo": false
+      "handicap": 15
     },
     {
       "hole": 4,
       "par": 5,
-      "handicap": 3,
-      "is_turbo": false
+      "handicap": 3
     },
     {
       "hole": 5,
       "par": 4,
-      "handicap": 1,
-      "is_turbo": false
+      "handicap": 1
     },
     {
       "hole": 6,
       "par": 4,
-      "handicap": 9,
-      "is_turbo": false
+      "handicap": 9
     },
     {
       "hole": 7,
       "par": 3,
-      "handicap": 17,
-      "is_turbo": false
+      "handicap": 17
     },
     {
       "hole": 8,
       "par": 5,
-      "handicap": 5,
-      "is_turbo": false
+      "handicap": 5
     },
     {
       "hole": 9,
       "par": 4,
-      "handicap": 13,
-      "is_turbo": true
+      "handicap": 13
     },
     {
       "hole": 10,
       "par": 4,
-      "handicap": 8,
-      "is_turbo": false
+      "handicap": 8
     },
     {
       "hole": 11,
       "par": 5,
-      "handicap": 4,
-      "is_turbo": false
+      "handicap": 4
     },
     {
       "hole": 12,
       "par": 3,
-      "handicap": 16,
-      "is_turbo": false
+      "handicap": 16
     },
     {
       "hole": 13,
       "par": 4,
-      "handicap": 2,
-      "is_turbo": false
+      "handicap": 2
     },
     {
       "hole": 14,
       "par": 4,
-      "handicap": 10,
-      "is_turbo": false
+      "handicap": 10
     },
     {
       "hole": 15,
       "par": 4,
-      "handicap": 12,
-      "is_turbo": false
+      "handicap": 12
     },
     {
       "hole": 16,
       "par": 3,
-      "handicap": 18,
-      "is_turbo": false
+      "handicap": 18
     },
     {
       "hole": 17,
       "par": 5,
-      "handicap": 6,
-      "is_turbo": false
+      "handicap": 6
     },
     {
       "hole": 18,
       "par": 4,
-      "handicap": 14,
-      "is_turbo": true
+      "handicap": 14
     }
   ],
   "scores": {
     "1": {
+      "team_a": [
+        "p1",
+        "p2"
+      ],
+      "team_b": [
+        "p3",
+        "p4"
+      ],
       "scores": {
         "p1": 4,
         "p2": 4,
         "p3": 5,
-        "p4": 5,
-        "p5": 6
+        "p4": 5
+      }
+    },
+    "2": {
+      "scores": {
+        "p1": 4,
+        "p2": 5,
+        "p3": 5,
+        "p4": 6
       },
       "team_a": [
         "p1",
@@ -190,19 +178,9 @@
       ],
       "team_b": [
         "p3",
-        "p4",
-        "p5"
+        "p4"
       ]
-    },
-    "2": {
-      "scores": {
-        "p1": 4,
-        "p2": 5,
-        "p3": 5,
-        "p4": 6,
-        "p5": 7
-      }
     }
   },
-  "last_updated": 1789096858.6493123
+  "last_updated": 1789102436.9986365
 }

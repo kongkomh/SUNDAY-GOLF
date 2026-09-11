@@ -101,8 +101,8 @@
         <span>Cash Momentum</span>
       </button>
       <button onclick="switchTab('leaderboard')" id="tab-btn-leaderboard" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
-        <i data-lucide="trophy" class="w-4 h-4 text-amber-400"></i>
-        <span class="text-amber-300 font-extrabold">Leaderboard</span>
+        <i data-lucide="trophy" class="w-4 h-4"></i>
+        <span>Leaderboard</span>
       </button>
       <button onclick="switchTab('settings')" id="tab-btn-settings" class="flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
         <i data-lucide="settings" class="w-4 h-4"></i>
@@ -127,7 +127,7 @@
           </span>
         </div>
 
-        <div id="hole-carousel" class="flex gap-2 overflow-x-auto pb-1 pt-1 scrollbar-thin no-scrollbar">
+        <div id="hole-carousel" class="flex gap-2 overflow-x-auto px-2 py-1.5 scrollbar-thin no-scrollbar touch-pan-x">
           <!-- Dynamically populated 18 hole buttons -->
         </div>
       </div>
@@ -584,13 +584,25 @@
             <p class="text-xs text-slate-400 mt-0.5">Select a course or customize Par, Stroke Handicap index, and Turbo toggles.</p>
           </div>
 
-          <!-- Pre-loaded Course Selector -->
-          <div class="flex items-center gap-2">
-            <label class="text-xs font-bold text-slate-400">Course:</label>
-            <select id="course-selector" onchange="onCourseSelected(this.value)" class="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white font-black max-w-[200px] sm:max-w-xs truncate">
-              <!-- Dynamically populated from courses.json -->
-            </select>
+          <!-- Pre-loaded Course Selector & New Course Button -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center gap-2">
+              <label class="text-xs font-bold text-slate-400">Course:</label>
+              <select id="course-selector" onchange="onCourseSelected(this.value)" class="bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white font-black max-w-[170px] sm:max-w-xs truncate">
+                <!-- Dynamically populated from courses.json -->
+              </select>
+            </div>
+            <button type="button" id="btn-new-course" onclick="startNewCourse()" class="py-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition flex items-center gap-1 shadow-md">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+              <span>New Course</span>
+            </button>
           </div>
+        </div>
+
+        <!-- Course Name Box -->
+        <div class="flex items-center gap-2 pt-0.5">
+          <label class="text-xs font-bold text-slate-400 shrink-0">Course Name:</label>
+          <input id="cfg-course-name" type="text" placeholder="Enter course name..." class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-black focus:border-amber-500 focus:outline-none shadow-inner">
         </div>
 
         <!-- 18 Holes Table -->
@@ -620,10 +632,16 @@
             <span>Total Par: <strong id="course-tot-par" class="text-amber-400 font-black">72</strong></span>
           </div>
 
-          <button id="btn-save-course" onclick="saveCourseSpecs()" class="py-2 px-5 rounded-xl bg-slate-800 text-slate-400 font-black text-xs transition border border-slate-700 flex items-center gap-1.5">
-            <i data-lucide="check" class="w-3.5 h-3.5"></i>
-            <span>Save Course Specs</span>
-          </button>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button id="btn-save-new-course" onclick="saveNewCourse()" class="py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition shadow-lg shadow-emerald-600/20 flex items-center gap-1.5">
+              <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+              <span>Save As New Course</span>
+            </button>
+            <button id="btn-save-course" onclick="saveCourseSpecs()" class="py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-black text-xs transition border border-slate-700 flex items-center gap-1.5">
+              <i data-lucide="check" class="w-3.5 h-3.5"></i>
+              <span>Save Course Specs</span>
+            </button>
+          </div>
         </div>
 
       </div>

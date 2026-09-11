@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import copy
+import re
 import threading
 from urllib.parse import urlparse
 from typing import Dict, List, Any, Optional
@@ -51,6 +52,16 @@ def load_courses_database() -> List[Dict[str, Any]]:
         except Exception as e:
             print(f"[COURSES] Error loading {COURSES_FILE}: {e}")
     return []
+
+
+def save_courses_database(courses: List[Dict[str, Any]]) -> bool:
+    try:
+        with open(COURSES_FILE, "w", encoding="utf-8") as f:
+            json.dump(courses, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"[COURSES] Error saving {COURSES_FILE}: {e}")
+        return False
 
 
 def copy_dict(d):
@@ -242,16 +253,68 @@ class TournamentStore:
         self.broadcast_event("settings_update", state)
         return state
 
+    def create_new_course(self, course_payload: Dict[str, Any]) -> Dict[str, Any]:
+        with self.lock:
+            course_name = str(course_payload.get("course_name") or course_payload.get("name") or "Custom Golf Course").strip()
+            slug = re.sub(r'[^a-zA-Z0-9]+', '-', course_name.lower()).strip('-')
+            if not slug:
+                slug = "custom-course"
+            course_id = f"course-{slug}-{int(time.time())}"
+
+            holes_in = course_payload.get("holes") or []
+            clean_holes = []
+            for i in range(1, 19):
+                h_match = next((h for h in holes_in if int(h.get("hole", 0)) == i), None)
+                if h_match:
+                    clean_holes.append({
+                        "hole": i,
+                        "par": int(h_match.get("par", 4)),
+                        "handicap": int(h_match.get("handicap", i)),
+                        "is_turbo": bool(h_match.get("is_turbo", False))
+                    })
+                else:
+                    clean_holes.append({
+                        "hole": i,
+                        "par": 4,
+                        "handicap": i,
+                        "is_turbo": False
+                    })
+
+            new_course = {
+                "id": course_id,
+                "name": course_name,
+                "location": "Custom",
+                "holes": clean_holes
+            }
+
+            courses = load_courses_database()
+            courses.append(new_course)
+            save_courses_database(courses)
+
+            self.data["course_id"] = course_id
+            self.data["course_name"] = course_name
+            self.data["holes"] = clean_holes
+            self.data["last_updated"] = time.time()
+            self._save(self.data)
+            state = calculate_tournament_state(self.data)
+
+        self.broadcast_event("course_update", state)
+        return {
+            "state": state,
+            "courses": courses,
+            "new_course_id": course_id
+        }
+
     def update_course(self, course_payload: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
             if "course_id" in course_payload:
                 self.data["course_id"] = course_payload["course_id"]
             if "course_name" in course_payload:
-                self.data["course_name"] = course_payload["course_name"]
+                self.data["course_name"] = str(course_payload["course_name"]).strip()
 
             holes_in = course_payload.get("holes")
+            clean_holes = []
             if holes_in and isinstance(holes_in, list):
-                clean_holes = []
                 for h in holes_in:
                     clean_holes.append({
                         "hole": int(h.get("hole", 1)),
@@ -260,6 +323,22 @@ class TournamentStore:
                         "is_turbo": bool(h.get("is_turbo", False))
                     })
                 self.data["holes"] = clean_holes
+
+            # If this course exists in courses database, keep it synced
+            c_id = self.data.get("course_id")
+            if c_id:
+                courses = load_courses_database()
+                updated_c = False
+                for c in courses:
+                    if c.get("id") == c_id:
+                        if "course_name" in course_payload:
+                            c["name"] = str(course_payload["course_name"]).strip()
+                        if clean_holes:
+                            c["holes"] = copy_dict(clean_holes)
+                        updated_c = True
+                        break
+                if updated_c:
+                    save_courses_database(courses)
 
             self.data["last_updated"] = time.time()
             self._save(self.data)
@@ -502,6 +581,11 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/settings":
             state = store.update_settings(body)
             self.send_json_response(state)
+            return
+
+        if path == "/api/courses" or (path == "/api/course" and body.get("is_new")):
+            result = store.create_new_course(body)
+            self.send_json_response(result)
             return
 
         if path == "/api/course":

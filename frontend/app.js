@@ -29,12 +29,12 @@ const DEFAULT_COLORS = [
 ];
 
 const DEFAULT_NAMES = [
-  "Shirobon",
-  "Kurobon",
-  "Akabon",
-  "Aobon",
-  "Midoribon",
-  "Kibon"
+  "PLAYER 1",
+  "PLAYER 2",
+  "PLAYER 3",
+  "PLAYER 4",
+  "PLAYER 5",
+  "PLAYER 6"
 ];
 
 // ================= INITIALIZATION =================
@@ -448,7 +448,8 @@ function renderHoleCarousel(holes, calcHoles) {
   setTimeout(() => {
     const activeEl = container.querySelector('.ring-amber-400');
     if (activeEl) {
-      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      const scrollTarget = activeEl.offsetLeft - (container.clientWidth / 2) + (activeEl.clientWidth / 2);
+      container.scrollTo({ left: Math.max(0, scrollTarget), behavior: 'smooth' });
     }
   }, 40);
 }
@@ -1069,9 +1070,11 @@ function movePlayerToTeam(playerId, targetTeam) {
 }
 
 function stepScore(playerId, delta) {
+  const hSpec = state.tournament?.holes?.find(h => h.hole === state.currentHole);
+  const defaultPar = hSpec?.par || 4;
   const current = state.localScores[playerId] !== undefined 
     ? state.localScores[playerId] 
-    : (state.tournament?.calculated_holes?.find(h => h.hole === state.currentHole)?.scores?.[playerId] || 4);
+    : (state.tournament?.calculated_holes?.find(h => h.hole === state.currentHole)?.scores?.[playerId] ?? defaultPar);
 
   const nextScore = Math.max(1, Math.min(15, current + delta));
   state.localScores[playerId] = nextScore;
@@ -1545,6 +1548,9 @@ function togglePlayerLineupAccordion() {
 }
 
 function setGameMode(mode) {
+  if (state.tournament?.game_settings) {
+    state.tournament.game_settings.game_mode = mode;
+  }
   setGameModeUI(mode);
 }
 
@@ -1650,12 +1656,17 @@ async function togglePlayerDefaultTeam(playerId, team) {
     defaultTeamsMap[p.id] = p.default_team || 'left';
   });
 
+  const isWolf = document.getElementById('btn-mode-wolf')?.classList.contains('bg-purple-600');
+  const isFFA = document.getElementById('btn-mode-ffa')?.classList.contains('bg-emerald-500');
+  const currentMode = isWolf ? 'WOLF' : (isFFA ? 'FREE_FOR_ALL' : 'TEAMS');
+
   try {
     const res = await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         game_settings: {
+          game_mode: currentMode,
           default_teams: defaultTeamsMap
         }
       })
@@ -1889,11 +1900,20 @@ function renderCourseSelector() {
       ${c.name}
     </option>
   `).join('');
+
+  const nameInp = document.getElementById('cfg-course-name');
+  if (nameInp) {
+    const cur = state.courses.find(c => c.id === currentCourseId);
+    nameInp.value = cur?.name || state.tournament?.course_name || 'Krungthep Kreetha Golf Course';
+  }
 }
 
 function onCourseSelected(courseId) {
   const selectedCourse = state.courses.find(c => c.id === courseId);
   if (!selectedCourse) return;
+
+  const nameInp = document.getElementById('cfg-course-name');
+  if (nameInp) nameInp.value = selectedCourse.name;
 
   const holes = selectedCourse.holes.map(h => ({
     hole: h.hole,
@@ -1910,11 +1930,50 @@ function onCourseSelected(courseId) {
   renderCourseHolesTable();
 }
 
+function startNewCourse() {
+  const select = document.getElementById('course-selector');
+  if (select) {
+    let draftOpt = select.querySelector('option[value="__new__"]');
+    if (!draftOpt) {
+      draftOpt = document.createElement('option');
+      draftOpt.value = '__new__';
+      draftOpt.textContent = '+ Draft New Course...';
+      select.prepend(draftOpt);
+    }
+    select.value = '__new__';
+  }
+
+  const nameInp = document.getElementById('cfg-course-name');
+  if (nameInp) {
+    nameInp.value = '';
+    nameInp.focus();
+  }
+
+  // Standard 18-hole default pars (par 72)
+  const standardPars = [4, 4, 3, 5, 4, 4, 3, 5, 4, 4, 4, 3, 5, 4, 4, 3, 5, 4];
+  const newHoles = [];
+  for (let i = 1; i <= 18; i++) {
+    newHoles.push({
+      hole: i,
+      par: standardPars[i - 1],
+      handicap: i,
+      is_turbo: (i === 9 || i === 18)
+    });
+  }
+
+  state.tournament.course_id = '__new__';
+  state.tournament.course_name = '';
+  state.tournament.holes = newHoles;
+
+  markCourseModified();
+  renderCourseHolesTable();
+}
+
 function markCourseModified() {
   state.isCourseModified = true;
   const btn = document.getElementById('btn-save-course');
   if (btn) {
-    btn.className = "py-2 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs transition shadow-lg shadow-emerald-500/25 flex items-center gap-1.5 ring-2 ring-emerald-400";
+    btn.className = "py-2 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs transition shadow-lg shadow-emerald-500/25 flex items-center gap-1.5 ring-2 ring-emerald-400";
   }
 }
 
@@ -1984,11 +2043,71 @@ function recalculateCoursePars() {
   if (totEl) totEl.textContent = outPar + inPar;
 }
 
+async function saveNewCourse() {
+  const nameInp = document.getElementById('cfg-course-name');
+  const courseName = nameInp?.value.trim();
+  if (!courseName) {
+    alert("Please enter a course name in the Course Name box.");
+    if (nameInp) nameInp.focus();
+    return;
+  }
+
+  const holesPayload = [];
+  for (let i = 1; i <= 18; i++) {
+    const pill = document.getElementById(`course-par-pill-${i}`);
+    const par = parseInt(pill?.dataset?.par) || 4;
+    const hcp = parseInt(document.getElementById(`hcp-idx-${i}`)?.value) || i;
+    const isTurbo = document.getElementById(`turbo-chk-${i}`)?.checked || false;
+
+    holesPayload.push({
+      hole: i,
+      par: par,
+      handicap: hcp,
+      is_turbo: isTurbo
+    });
+  }
+
+  try {
+    const res = await fetch('/api/courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        course_name: courseName,
+        holes: holesPayload,
+        is_new: true
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.courses) {
+        state.courses = data.courses;
+      }
+      state.isCourseModified = false;
+      const btn = document.getElementById('btn-save-course');
+      if (btn) {
+        btn.className = "py-2 px-4 rounded-xl bg-slate-800 text-slate-400 font-black text-xs transition border border-slate-700 flex items-center gap-1.5";
+      }
+      if (data.state) {
+        updateTournamentState(data.state);
+      }
+      renderCourseSelector();
+      alert(`New course "${courseName}" saved successfully!`);
+    }
+  } catch (err) {
+    console.error("Error saving new course:", err);
+  }
+}
+
 async function saveCourseSpecs() {
   const select = document.getElementById('course-selector');
-  const courseId = select?.value || state.tournament?.course_id || 'course-krungthep-kreetha';
-  const selectedCourse = state.courses.find(c => c.id === courseId);
-  const courseName = selectedCourse?.name || state.tournament?.course_name || 'Krungthep Kreetha';
+  let courseId = select?.value || state.tournament?.course_id || 'course-krungthep-kreetha';
+  if (courseId === '__new__') {
+    return saveNewCourse();
+  }
+
+  const nameInp = document.getElementById('cfg-course-name');
+  const courseName = nameInp?.value.trim() || state.tournament?.course_name || 'Krungthep Kreetha';
 
   const holesPayload = [];
   for (let i = 1; i <= 18; i++) {
@@ -2021,9 +2140,10 @@ async function saveCourseSpecs() {
       state.isCourseModified = false;
       const btn = document.getElementById('btn-save-course');
       if (btn) {
-        btn.className = "py-2 px-5 rounded-xl bg-slate-800 text-slate-400 font-black text-xs transition border border-slate-700 flex items-center gap-1.5";
+        btn.className = "py-2 px-4 rounded-xl bg-slate-800 text-slate-400 font-black text-xs transition border border-slate-700 flex items-center gap-1.5";
       }
       updateTournamentState(data);
+      await fetchCourses();
       alert("Course specifications saved successfully!");
     }
   } catch (err) {

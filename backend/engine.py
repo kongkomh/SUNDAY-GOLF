@@ -17,7 +17,7 @@ import itertools
 DEFAULT_PLAYERS = [
     {
         "id": "p1",
-        "name": "Shirobon",
+        "name": "PLAYER 1",
         "color": "#FFFFFF",
         "hcp_out": 0,
         "hcp_in": 0,
@@ -25,7 +25,7 @@ DEFAULT_PLAYERS = [
     },
     {
         "id": "p2",
-        "name": "Kurobon",
+        "name": "PLAYER 2",
         "color": "#1E293B",
         "hcp_out": 0,
         "hcp_in": 0,
@@ -33,7 +33,7 @@ DEFAULT_PLAYERS = [
     },
     {
         "id": "p3",
-        "name": "Akabon",
+        "name": "PLAYER 3",
         "color": "#EF4444",
         "hcp_out": 0,
         "hcp_in": 0,
@@ -41,7 +41,7 @@ DEFAULT_PLAYERS = [
     },
     {
         "id": "p4",
-        "name": "Aobon",
+        "name": "PLAYER 4",
         "color": "#3B82F6",
         "hcp_out": 0,
         "hcp_in": 0,
@@ -50,21 +50,21 @@ DEFAULT_PLAYERS = [
 ]
 
 DEFAULT_PLAYER_COLORS = [
-    "#FFFFFF",  # P1: White (Shirobon)
-    "#1E293B",  # P2: Black (Kurobon)
-    "#EF4444",  # P3: Red (Akabon)
-    "#3B82F6",  # P4: Blue (Aobon)
-    "#10B981",  # P5: Green (Midoribon)
-    "#F59E0B"   # P6: Yellow (Kibon)
+    "#FFFFFF",  # P1: White
+    "#1E293B",  # P2: Black
+    "#EF4444",  # P3: Red
+    "#3B82F6",  # P4: Blue
+    "#10B981",  # P5: Green
+    "#F59E0B"   # P6: Yellow
 ]
 
 DEFAULT_PLAYER_NAMES = [
-    "Shirobon",
-    "Kurobon",
-    "Akabon",
-    "Aobon",
-    "Midoribon",
-    "Kibon"
+    "PLAYER 1",
+    "PLAYER 2",
+    "PLAYER 3",
+    "PLAYER 4",
+    "PLAYER 5",
+    "PLAYER 6"
 ]
 
 DEFAULT_SETTINGS = {
