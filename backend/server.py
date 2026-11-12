@@ -24,7 +24,7 @@ from engine import (
     DEFAULT_PLAYER_COLORS,
     DEFAULT_PLAYER_NAMES
 )
-from db import db
+from db import db, DEFAULT_TEES
 import auth
 
 PORT = int(os.environ.get("PORT", 8080))
@@ -78,9 +78,25 @@ class RoundManager:
         c_id = selected_course["id"] if selected_course else "course-krungthep-kreetha"
         holes = copy.deepcopy(selected_course.get("holes") or DEFAULT_HOLES) if selected_course else copy.deepcopy(DEFAULT_HOLES)
 
+        # Auto-name format: YYYY-MM-DD [Course Name] - [Creator First Name] [Suffix]
         now = time.time()
         date_str = time.strftime("%Y-%m-%d", time.localtime(now))
-        round_name = f"{date_str} - {c_name}"
+        creator_first = "Guest"
+        if owner_id:
+            user = db.get_user(owner_id)
+            if user:
+                parts = (user.get("name") or "").strip().split()
+                creator_first = parts[0] if parts else "Golfer"
+                p_rec = db.find_player_by_user_id(owner_id)
+                if p_rec and p_rec.get("first_name"):
+                    creator_first = p_rec["first_name"]
+
+        base_name = f"{date_str} {c_name} - {creator_first}"
+        existing = db.find_rounds_by_name_prefix(base_name)
+        if not existing:
+            round_name = base_name
+        else:
+            round_name = f"{base_name} {len(existing) + 1}"
 
         round_data = {
             "name": round_name,
@@ -88,7 +104,7 @@ class RoundManager:
             "course_name": c_name,
             "starting_hole": 1,
             "is_finished": False,
-            "selected_tee": selected_course.get("tees", [{}])[2] if selected_course and selected_course.get("tees") else db.DEFAULT_TEES[2],
+            "selected_tee": selected_course.get("tees", [{}])[2] if selected_course and selected_course.get("tees") else DEFAULT_TEES[2],
             "game_settings": copy.deepcopy(DEFAULT_SETTINGS),
             "players": copy.deepcopy(DEFAULT_PLAYERS),
             "holes": holes,
@@ -109,7 +125,7 @@ class RoundManager:
         state["is_finished"] = bool(round_data.get("is_finished", False))
         state["is_owner"] = bool(user_id and round_data.get("owner_id") and user_id == round_data.get("owner_id"))
         state["starting_hole"] = round_data.get("starting_hole", 1)
-        state["selected_tee"] = round_data.get("selected_tee") or db.DEFAULT_TEES[2]
+        state["selected_tee"] = round_data.get("selected_tee") or DEFAULT_TEES[2]
         state["created_at"] = round_data.get("created_at")
         state["updated_at"] = round_data.get("updated_at")
         return state
@@ -255,7 +271,7 @@ class RoundManager:
 
             c_id = course_payload.get("course_id") or round_data.get("course_id")
             c_name = course_payload.get("course_name") or round_data.get("course_name")
-            selected_tee = course_payload.get("selected_tee") or round_data.get("selected_tee") or db.DEFAULT_TEES[2]
+            selected_tee = course_payload.get("selected_tee") or round_data.get("selected_tee") or DEFAULT_TEES[2]
             tees_in = course_payload.get("tees")
 
             holes_in = course_payload.get("holes")
@@ -390,7 +406,7 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             return None
         return db.get_user(user_id)
 
-    def get_requested_round_id(self, parsed, user_id: Optional[str] = None) -> str:
+    def get_requested_round_id(self, parsed, user_id: Optional[str] = None) -> Optional[str]:
         # 1. From path: /api/round/<round_id>/... or /round/<round_id>
         parts = parsed.path.strip("/").split("/")
         if len(parts) >= 2 and parts[0] == "round":
@@ -403,12 +419,14 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         if "round" in params:
             return params["round"][0]
 
-        # 3. Default to latest active (unfinished) round for user, or create fresh
-        active = db.get_latest_active_round(user_id)
-        if active:
-            return active["id"]
-        fresh = round_manager.create_fresh_round(owner_id=user_id)
-        return fresh["id"]
+        # 3. If signed in, check if user has an active ongoing round
+        if user_id:
+            active = db.get_latest_active_round(user_id)
+            if active:
+                return active["id"]
+
+        # If not found, return None (DO NOT auto-create a round!)
+        return None
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -479,9 +497,21 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         # 2. Auth API: Current User
         if path == "/api/me":
             if user:
-                self.send_json_response({"authenticated": True, "user": user})
+                linked_p = db.find_player_by_user_id(user_id)
+                self.send_json_response({
+                    "authenticated": True,
+                    "user": user,
+                    "player": linked_p,
+                    "needs_player_link": (linked_p is None)
+                })
             else:
-                self.send_json_response({"authenticated": False, "user": None, "google_configured": auth.is_google_oauth_configured()})
+                self.send_json_response({
+                    "authenticated": False,
+                    "user": None,
+                    "player": None,
+                    "needs_player_link": False,
+                    "google_configured": auth.is_google_oauth_configured()
+                })
             return
 
         # 3. Courses API
@@ -539,11 +569,13 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/tournament":
             round_id = self.get_requested_round_id(parsed, user_id=user_id)
+            if not round_id:
+                self.send_json_response({"round": None, "has_ongoing": False, "authenticated": bool(user_id)})
+                return
             state = round_manager.get_round_state(round_id, user_id)
             if not state:
-                active = db.get_latest_active_round(user_id)
-                fallback_id = active["id"] if active else round_manager.create_fresh_round(owner_id=user_id)["id"]
-                state = round_manager.get_round_state(fallback_id, user_id)
+                self.send_json_response({"round": None, "has_ongoing": False, "authenticated": bool(user_id)})
+                return
             self.send_json_response(state)
             return
 
@@ -617,6 +649,61 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_response({"authenticated": False})
             return
 
+        # Player Profile & Linking APIs
+        if path == "/api/me/link-player":
+            if not user_id:
+                self.send_json_response({"error": "Unauthorized"}, status=401)
+                return
+            ply_id = body.get("player_id")
+            if not ply_id:
+                self.send_json_response({"error": "player_id required"}, status=400)
+                return
+            linked = db.link_user_to_existing_player(user_id, ply_id, user.get("name", "Golfer"), user.get("email", ""))
+            if not linked:
+                self.send_json_response({"error": "Player not found"}, status=404)
+                return
+            self.send_json_response({"status": "ok", "player": linked})
+            return
+
+        if path == "/api/me/create-player":
+            if not user_id:
+                self.send_json_response({"error": "Unauthorized"}, status=401)
+                return
+            nick = (body.get("nickname") or "").strip()
+            if not nick:
+                self.send_json_response({"error": "Nickname is required"}, status=400)
+                return
+            try:
+                hcp = float(body.get("current_handicap") or body.get("handicap") or 18.0)
+            except Exception:
+                hcp = 18.0
+            parts = (user.get("name") or "").strip().split()
+            first_name = parts[0] if parts else nick
+            last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+            email = user.get("email")
+
+            existing = db.check_player_exists(nick, first_name, last_name)
+            if existing:
+                self.send_json_response({"error": f"A player with nickname '{nick}' already exists."}, status=409)
+                return
+
+            new_p = db.create_player(nick, first_name, last_name, email=email, user_id=user_id, current_handicap=hcp)
+            db.add_user_player(user_id, new_p["id"])
+            self.send_json_response({"status": "ok", "player": new_p})
+            return
+
+        if path == "/api/me/player":
+            if not user_id:
+                self.send_json_response({"error": "Unauthorized"}, status=401)
+                return
+            linked_p = db.find_player_by_user_id(user_id)
+            if not linked_p:
+                self.send_json_response({"error": "No linked player profile found"}, status=404)
+                return
+            updated_p = db.update_player_profile(linked_p["id"], body)
+            self.send_json_response({"status": "ok", "player": updated_p})
+            return
+
         # 2. Create New Round
         if path == "/api/rounds":
             course_id = body.get("course_id")
@@ -629,7 +716,7 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/courses" or (path == "/api/course" and body.get("is_new")):
             course_name = body.get("course_name") or "Custom Course"
             holes = body.get("holes") or DEFAULT_HOLES
-            tees = body.get("tees") or db.DEFAULT_TEES
+            tees = body.get("tees") or DEFAULT_TEES
             new_c = db.create_course(course_name, holes, tees=tees)
             courses = db.list_courses()
             self.send_json_response({
@@ -746,6 +833,9 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         self.send_error(404, "Endpoint Not Found")
+
+    def do_PUT(self):
+        self.do_POST()
 
     def do_DELETE(self):
         parsed = urllib.parse.urlparse(self.path)

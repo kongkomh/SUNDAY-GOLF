@@ -18,6 +18,7 @@ let state = {
   draggedPlayerId: null,
   isCourseModified: false,
   currentUser: null,
+  currentPlayer: null,
   roundId: null
 };
 
@@ -76,14 +77,131 @@ const DEFAULT_NAMES = [
   "PLAYER 6"
 ];
 
-// ================= INITIALIZATION =================
-document.addEventListener('DOMContentLoaded', () => {
+// ================= THEME SYSTEM =================
+function initTheme() {
+  const saved = localStorage.getItem('golf_app_theme') || 'fairway';
+  setAppTheme(saved, false);
+}
+
+function toggleAppTheme() {
+  const isFairway = document.documentElement.classList.contains('theme-fairway');
+  setAppTheme(isFairway ? 'dark' : 'fairway', true);
+}
+
+function setAppTheme(theme, save = true) {
+  const icon = document.getElementById('theme-toggle-icon');
+  const label = document.getElementById('theme-toggle-label');
+  const cardFairway = document.getElementById('theme-card-fairway');
+  const cardDark = document.getElementById('theme-card-dark');
+
+  if (theme === 'fairway') {
+    document.documentElement.classList.add('theme-fairway');
+    document.documentElement.classList.remove('dark');
+    if (icon) icon.textContent = '☀️';
+    if (label) label.textContent = 'Fairway';
+    if (cardFairway) cardFairway.classList.add('ring-2', 'ring-[#16452e]', 'shadow-lg');
+    if (cardDark) cardDark.classList.remove('ring-2', 'ring-amber-400', 'shadow-lg');
+  } else {
+    document.documentElement.classList.remove('theme-fairway');
+    document.documentElement.classList.add('dark');
+    if (icon) icon.textContent = '🌙';
+    if (label) label.textContent = 'Dark';
+    if (cardDark) cardDark.classList.add('ring-2', 'ring-amber-400', 'shadow-lg');
+    if (cardFairway) cardFairway.classList.remove('ring-2', 'ring-[#16452e]', 'shadow-lg');
+  }
+
+  if (save) {
+    localStorage.setItem('golf_app_theme', theme);
+  }
+}
+
+// ================= SCREEN ROUTING =================
+function showScreen(screenName) {
+  const welcomeScreen = document.getElementById('welcome-screen');
+  const lobbyScreen = document.getElementById('lobby-screen');
+  const gameContainer = document.getElementById('game-container');
+  const roundActions = document.getElementById('header-round-actions');
+  const mobileNav = document.querySelector('.mobile-bottom-nav');
+  const liveIndicator = document.getElementById('live-indicator');
+  const leaderPill = document.getElementById('header-leader-pill');
+  const headerTitle = document.getElementById('header-tournament-name');
+  const headerCourse = document.getElementById('header-course-name');
+
+  if (screenName === 'welcome') {
+    if (welcomeScreen) welcomeScreen.classList.remove('hidden');
+    if (lobbyScreen) lobbyScreen.classList.add('hidden');
+    if (gameContainer) gameContainer.classList.add('hidden');
+    if (roundActions) roundActions.classList.add('hidden');
+    if (mobileNav) mobileNav.classList.add('hidden');
+    if (liveIndicator) liveIndicator.classList.add('hidden');
+    if (leaderPill) leaderPill.classList.add('hidden');
+    if (headerTitle) headerTitle.innerHTML = '<span>Sunday Golf Tracker</span>';
+    if (headerCourse) headerCourse.textContent = 'Casual Golf, Match Play & Wolf Game';
+  } else if (screenName === 'lobby') {
+    if (welcomeScreen) welcomeScreen.classList.add('hidden');
+    if (lobbyScreen) lobbyScreen.classList.remove('hidden');
+    if (gameContainer) gameContainer.classList.add('hidden');
+    if (roundActions) roundActions.classList.add('hidden');
+    if (mobileNav) mobileNav.classList.add('hidden');
+    if (liveIndicator) liveIndicator.classList.add('hidden');
+    if (leaderPill) leaderPill.classList.add('hidden');
+    const uName = state.currentUser ? (state.currentUser.given_name || state.currentUser.name?.split(' ')[0] || 'Golfer') : 'Golfer';
+    const lobbyNameEl = document.getElementById('lobby-user-name');
+    if (lobbyNameEl) lobbyNameEl.textContent = uName;
+    if (headerTitle) headerTitle.innerHTML = '<span>Sunday Golf Tracker</span>';
+    if (headerCourse) headerCourse.textContent = 'Welcome back! Choose or start a round.';
+  } else if (screenName === 'game') {
+    if (welcomeScreen) welcomeScreen.classList.add('hidden');
+    if (lobbyScreen) lobbyScreen.classList.add('hidden');
+    if (gameContainer) gameContainer.classList.remove('hidden');
+    if (roundActions) roundActions.classList.remove('hidden');
+    if (mobileNav) mobileNav.classList.remove('hidden');
+    if (liveIndicator) liveIndicator.classList.remove('hidden');
+    renderHeader();
+  }
   initIcons();
-  fetchCurrentUser();
-  fetchInitialState();
-  fetchCourses();
+}
+
+async function startRoundAsGuest() {
+  try {
+    const res = await fetch('/api/rounds', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        course_id: 'course-krungthep-kreetha',
+        starting_hole: 1
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const newRoundId = data.round_id || data.id;
+      const newUrl = `${window.location.origin}/round/${newRoundId}`;
+      window.history.pushState({ roundId: newRoundId }, '', newUrl);
+      state.roundId = newRoundId;
+      state.localScores = {};
+      state.unlockedHoles = {};
+      updateTournamentState(data);
+      showScreen('game');
+      setupSSE();
+      showToast("Guest round started! Share the link with your group.");
+    } else {
+      showToast("Failed to start guest round.", "error");
+    }
+  } catch (err) {
+    console.error("Error starting guest round:", err);
+    showToast("Network error starting round.", "error");
+  }
+}
+
+// ================= INITIALIZATION =================
+document.addEventListener('DOMContentLoaded', async () => {
+  initTheme();
+  initIcons();
   setupDragScroll('scorecard-scroll-container');
   setupDragScroll('hole-carousel');
+  await fetchCurrentUser();
+  await fetchInitialState();
+  fetchCourses();
 });
 
 function initIcons() {
@@ -188,34 +306,55 @@ function setupSSE() {
 async function fetchInitialState() {
   try {
     const urlRoundId = getUrlRoundId();
-    const endpoint = urlRoundId ? `/api/round/${urlRoundId}` : '/api/tournament';
-    const res = await fetch(endpoint);
+
+    if (urlRoundId) {
+      const res = await fetch(`/api/round/${urlRoundId}`);
+      if (res.ok) {
+        const data = await res.json();
+        state.roundId = data.round_id || data.id || urlRoundId;
+        state.currentHole = data.current_display_hole || data.starting_hole || 1;
+        updateTournamentState(data);
+        showScreen('game');
+        setupSSE();
+        return;
+      } else if (res.status === 404) {
+        showToast("The requested round was not found or has been deleted.", "error");
+        window.history.replaceState(null, '', '/');
+      }
+    }
+
+    // Base URL '/' (No round in URL)
+    if (!state.currentUser) {
+      // Unauthenticated: Show Welcome Screen (Never auto-create round!)
+      showScreen('welcome');
+      return;
+    }
+
+    // Authenticated user on base URL: check if they have an ongoing round
+    const res = await fetch('/api/tournament');
     if (res.ok) {
       const data = await res.json();
-      state.roundId = data.round_id || data.id;
-      if (state.roundId && !window.location.search.includes(`round=${state.roundId}`)) {
+      if (data && (data.round_id || data.id) && data.round !== null) {
+        state.roundId = data.round_id || data.id;
         window.history.replaceState(null, '', `/?round=${state.roundId}`);
-      }
-      state.currentHole = data.current_display_hole || data.starting_hole || 1;
-      updateTournamentState(data);
-      setupSSE();
-    } else if (res.status === 404 && urlRoundId) {
-      // If round was deleted or not found, clear URL parameter and load active/fresh round
-      window.history.replaceState(null, '', '/');
-      const fallbackRes = await fetch('/api/tournament');
-      if (fallbackRes.ok) {
-        const fallbackData = await fallbackRes.json();
-        state.roundId = fallbackData.round_id || fallbackData.id;
-        if (state.roundId) {
-          window.history.replaceState(null, '', `/?round=${state.roundId}`);
-        }
-        state.currentHole = fallbackData.current_display_hole || fallbackData.starting_hole || 1;
-        updateTournamentState(fallbackData);
+        state.currentHole = data.current_display_hole || data.starting_hole || 1;
+        updateTournamentState(data);
+        showScreen('game');
         setupSSE();
+      } else {
+        // No ongoing round: show Lobby Screen
+        showScreen('lobby');
       }
+    } else {
+      showScreen('lobby');
     }
   } catch (err) {
     console.error("Failed to fetch initial state:", err);
+    if (!state.currentUser) {
+      showScreen('welcome');
+    } else {
+      showScreen('lobby');
+    }
   }
 }
 
@@ -225,7 +364,11 @@ async function fetchCurrentUser() {
     if (res.ok) {
       const data = await res.json();
       state.currentUser = data.authenticated ? data.user : null;
+      state.currentPlayer = data.player || null;
       renderAuth();
+      if (data.authenticated && data.needs_player_link) {
+        openLinkPlayerModal();
+      }
     }
   } catch (err) {
     console.error("Failed to fetch user:", err);
@@ -2248,30 +2391,43 @@ function startNewCourse() {
     select.value = '__new__';
   }
 
+  // Clear Course Name field
   const nameInp = document.getElementById('cfg-course-name');
   if (nameInp) {
     nameInp.value = '';
     nameInp.focus();
   }
 
-  // Standard 18-hole default pars (par 72)
-  const standardPars = [4, 4, 3, 5, 4, 4, 3, 5, 4, 4, 4, 3, 5, 4, 4, 3, 5, 4];
+  // Set all 18 holes to PAR 4 and clear HCP INDEX
   const newHoles = [];
   for (let i = 1; i <= 18; i++) {
     newHoles.push({
       hole: i,
-      par: standardPars[i - 1],
-      handicap: i,
-      is_turbo: (i === 9 || i === 18)
+      par: 4,
+      handicap: '',
+      is_turbo: false
     });
   }
 
-  state.tournament.course_id = '__new__';
-  state.tournament.course_name = '';
-  state.tournament.holes = newHoles;
+  if (state.tournament) {
+    state.tournament.course_id = '__new__';
+    state.tournament.course_name = '';
+    state.tournament.holes = newHoles;
+  }
+
+  renderCourseHolesTable();
+
+  // Clear all tee rating and slope fields
+  const tees = getActiveTees();
+  tees.forEach(t => {
+    const rInp = document.getElementById(`tee-rating-${t.id}`);
+    const sInp = document.getElementById(`tee-slope-${t.id}`);
+    if (rInp) rInp.value = '';
+    if (sInp) sInp.value = '';
+  });
 
   markCourseModified();
-  renderCourseHolesTable();
+  showToast("Course cleared: Par 4 set on all holes, HCP and Tee ratings cleared.");
 }
 
 function markCourseModified() {
@@ -2291,6 +2447,7 @@ function renderCourseHolesTable() {
 
   tbody.innerHTML = holes.map(h => {
     const par = h.par || 4;
+    const hcpVal = (h.handicap !== null && h.handicap !== undefined && h.handicap !== '') ? h.handicap : '';
     return `
       <tr class="hover:bg-slate-900/40 transition font-semibold">
         <td class="py-2.5 px-2 text-left font-black text-amber-400">Hole ${h.hole}</td>
@@ -2302,7 +2459,7 @@ function renderCourseHolesTable() {
           </div>
         </td>
         <td class="py-2.5 px-2">
-          <input type="number" id="hcp-idx-${h.hole}" min="1" max="18" value="${h.handicap || 9}" onchange="markCourseModified()" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white font-mono text-xs w-16 text-center">
+          <input type="number" id="hcp-idx-${h.hole}" min="1" max="18" value="${hcpVal}" placeholder="-" onchange="markCourseModified()" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white font-mono text-xs w-16 text-center">
         </td>
         <td class="py-2.5 px-2">
           <input type="checkbox" id="turbo-chk-${h.hole}" ${h.is_turbo ? 'checked' : ''} ${!turboEnabled ? 'disabled' : ''} onchange="markCourseModified()" class="w-4 h-4 text-amber-500 rounded border-slate-700 bg-slate-900 disabled:opacity-30">
@@ -2362,47 +2519,143 @@ function getActiveTees() {
   return state.tournament?.tees || curCourse?.tees || DEFAULT_TEES;
 }
 
-function renderCourseTees() {
-  const container = document.getElementById('course-tees-container');
-  if (!container) return;
-
+function populateActiveTeeSelector() {
+  const select = document.getElementById('active-tee-selector');
+  if (!select) return;
   const tees = getActiveTees();
-  const selectedTeeId = state.tournament?.selected_tee || 'white';
+  const selectedTee = state.tournament?.selected_tee;
+  const selectedTeeId = typeof selectedTee === 'object' ? selectedTee?.id : (selectedTee || 'white');
 
-  container.innerHTML = tees.map(tee => {
-    const isSelected = (tee.id === selectedTeeId);
-    return `
-      <div onclick="selectCourseTee('${tee.id}')"
-           class="cursor-pointer p-2 rounded-xl border transition text-center space-y-1.5 ${isSelected ? 'border-amber-400 bg-amber-500/10 shadow-md ring-1 ring-amber-400/50' : 'border-slate-800 bg-slate-900/80 hover:border-slate-700'}">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-1.5">
-            <span class="w-3.5 h-3.5 rounded-full border border-white/40 shadow-sm shrink-0" style="background-color: ${tee.color};"></span>
-            <span class="font-black text-xs ${isSelected ? 'text-amber-400' : 'text-slate-200'}">${tee.name}</span>
-          </div>
-          <input type="radio" name="tee-radio" value="${tee.id}" ${isSelected ? 'checked' : ''} class="w-3.5 h-3.5 accent-amber-500 cursor-pointer">
-        </div>
-        <div class="grid grid-cols-2 gap-1 text-[10px] text-left pt-1 border-t border-slate-800/80">
-          <div>
-            <label class="block text-slate-400 font-bold">Rating</label>
-            <input type="number" step="0.1" id="tee-rating-${tee.id}" value="${tee.course_rating}" onclick="event.stopPropagation()" oninput="markCourseModified()"
-                   class="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-center text-white font-mono text-[11px]">
-          </div>
-          <div>
-            <label class="block text-slate-400 font-bold">Slope</label>
-            <input type="number" id="tee-slope-${tee.id}" value="${tee.slope_rating}" onclick="event.stopPropagation()" oninput="markCourseModified()"
-                   class="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-center text-white font-mono text-[11px]">
-          </div>
-        </div>
-      </div>
-    `;
+  select.innerHTML = tees.map(t => {
+    return `<option value="${t.id}" ${t.id === selectedTeeId ? 'selected' : ''}>${t.name} (CR: ${t.course_rating}, Slope: ${t.slope_rating})</option>`;
   }).join('');
 }
 
-function selectCourseTee(teeId) {
+function onActiveTeeChanged(teeId) {
+  const tees = getActiveTees();
+  const teeObj = tees.find(t => t.id === teeId) || tees[0];
   if (!state.tournament) return;
-  state.tournament.selected_tee = teeId;
+  state.tournament.selected_tee = teeObj;
   renderCourseTees();
   markCourseModified();
+}
+
+function renderCourseTees() {
+  const container = document.getElementById('course-tees-table-container') || document.getElementById('course-tees-container');
+  if (!container) return;
+
+  const tees = getActiveTees();
+  const selectedTee = state.tournament?.selected_tee;
+  const selectedTeeId = typeof selectedTee === 'object' ? selectedTee?.id : (selectedTee || 'white');
+
+  container.innerHTML = `
+    <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/70 p-1">
+      <table class="w-full text-xs text-center border-collapse">
+        <thead>
+          <tr class="bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-wider border-b border-slate-800">
+            <th class="py-1.5 px-2 text-left">Tee Name</th>
+            <th class="py-1.5 px-2">Course Rating</th>
+            <th class="py-1.5 px-2">Slope Rating</th>
+            <th class="py-1.5 px-2">Active</th>
+            <th class="py-1.5 px-2">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/60 font-medium">
+          ${tees.map(tee => {
+            const isSelected = (tee.id === selectedTeeId);
+            return `
+              <tr class="hover:bg-slate-900/40 transition">
+                <td class="py-2 px-2 text-left">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 rounded-full border border-white/40 shadow-sm shrink-0" style="background-color: ${tee.color};"></span>
+                    <span class="font-black text-xs ${isSelected ? 'text-amber-400' : 'text-slate-200'}">${tee.name}</span>
+                  </div>
+                </td>
+                <td class="py-2 px-2">
+                  <input type="number" step="0.1" id="tee-rating-${tee.id}" value="${tee.course_rating}" onchange="markCourseModified()"
+                         class="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white font-mono text-xs w-20">
+                </td>
+                <td class="py-2 px-2">
+                  <input type="number" id="tee-slope-${tee.id}" value="${tee.slope_rating}" onchange="markCourseModified()"
+                         class="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white font-mono text-xs w-16">
+                </td>
+                <td class="py-2 px-2">
+                  <input type="radio" name="tee-active-radio" value="${tee.id}" ${isSelected ? 'checked' : ''} onchange="onActiveTeeChanged('${tee.id}')" class="w-3.5 h-3.5 accent-amber-500 cursor-pointer">
+                </td>
+                <td class="py-2 px-2">
+                  <button type="button" onclick="deleteTeeRow('${tee.id}')" class="p-1 rounded hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete Tee">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  populateActiveTeeSelector();
+  initIcons();
+}
+
+function addNewTeeRow() {
+  const name = prompt("Enter name for the new tee (e.g. Gold, Senior, Championship):");
+  if (!name || !name.trim()) return;
+  const cleanName = name.trim();
+  const teeId = 'tee-' + cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-') + '-' + Date.now().toString(36);
+  
+  if (!state.tournament) return;
+  if (!state.tournament.tees) {
+    state.tournament.tees = [...getActiveTees()];
+  }
+  state.tournament.tees.push({
+    id: teeId,
+    name: cleanName,
+    color: '#10b981',
+    course_rating: 72.0,
+    slope_rating: 125
+  });
+  renderCourseTees();
+  markCourseModified();
+  showToast(`Added "${cleanName}" tee.`);
+}
+
+function deleteTeeRow(teeId) {
+  if (!state.tournament) return;
+  let tees = getActiveTees();
+  if (tees.length <= 1) {
+    showToast("A course must have at least one tee.", "error");
+    return;
+  }
+  if (!confirm("Are you sure you want to delete this tee?")) return;
+  state.tournament.tees = tees.filter(t => t.id !== teeId);
+  const selectedTee = state.tournament.selected_tee;
+  const currentSelectedId = typeof selectedTee === 'object' ? selectedTee?.id : (selectedTee || 'white');
+  if (currentSelectedId === teeId) {
+    state.tournament.selected_tee = state.tournament.tees[0];
+  }
+  renderCourseTees();
+  markCourseModified();
+  showToast("Tee deleted.");
+}
+
+function promptSaveCourseSpecs() {
+  const modal = document.getElementById('confirm-course-modal');
+  if (modal) {
+    modal.classList.remove('hidden');
+  } else {
+    executeSaveCourseSpecs();
+  }
+}
+
+function closeConfirmCourseModal() {
+  const modal = document.getElementById('confirm-course-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function executeSaveCourseSpecs() {
+  closeConfirmCourseModal();
+  await saveCourseSpecs();
 }
 
 async function saveNewCourse() {
@@ -2437,11 +2690,12 @@ async function saveNewCourse() {
       id: t.id,
       name: t.name,
       color: t.color,
-      course_rating: ratingInp ? (parseFloat(ratingInp.value) || t.course_rating) : t.course_rating,
-      slope_rating: slopeInp ? (parseInt(slopeInp.value) || t.slope_rating) : t.slope_rating
+      course_rating: ratingInp ? (parseFloat(ratingInp.value) || t.course_rating || 72.0) : t.course_rating,
+      slope_rating: slopeInp ? (parseInt(slopeInp.value) || t.slope_rating || 113) : t.slope_rating
     };
   });
-  const selectedTee = state.tournament?.selected_tee || 'white';
+  const selTeeVal = document.getElementById('active-tee-selector')?.value || 'white';
+  const selectedTeeObj = teesPayload.find(t => t.id === selTeeVal) || teesPayload[0] || DEFAULT_TEES[2];
 
   try {
     const res = await fetch('/api/courses', {
@@ -2451,7 +2705,7 @@ async function saveNewCourse() {
         course_name: courseName,
         holes: holesPayload,
         tees: teesPayload,
-        selected_tee: selectedTee,
+        selected_tee: selectedTeeObj,
         is_new: true,
         round_id: state.roundId
       })
@@ -2517,11 +2771,12 @@ async function saveCourseSpecs() {
       id: t.id,
       name: t.name,
       color: t.color,
-      course_rating: ratingInp ? (parseFloat(ratingInp.value) || t.course_rating) : t.course_rating,
-      slope_rating: slopeInp ? (parseInt(slopeInp.value) || t.slope_rating) : t.slope_rating
+      course_rating: ratingInp ? (parseFloat(ratingInp.value) || t.course_rating || 72.0) : t.course_rating,
+      slope_rating: slopeInp ? (parseInt(slopeInp.value) || t.slope_rating || 113) : t.slope_rating
     };
   });
-  const selectedTee = state.tournament?.selected_tee || 'white';
+  const selTeeVal = document.getElementById('active-tee-selector')?.value || 'white';
+  const selectedTeeObj = teesPayload.find(t => t.id === selTeeVal) || teesPayload[0] || DEFAULT_TEES[2];
 
   try {
     const res = await fetch(getRoundApiUrl('/course'), {
@@ -2532,7 +2787,7 @@ async function saveCourseSpecs() {
         course_name: courseName,
         holes: holesPayload,
         tees: teesPayload,
-        selected_tee: selectedTee
+        selected_tee: selectedTeeObj
       })
     });
 
@@ -2757,32 +3012,73 @@ function showToast(msg, type = 'info') {
 // ================= AUTHENTICATION UI =================
 function renderAuth() {
   const container = document.getElementById('auth-container');
-  if (!container) return;
+  const myRoundsBtn = document.getElementById('btn-my-rounds');
+  const myPlayersBtn = document.getElementById('btn-my-players');
   const user = state.currentUser;
 
   if (user && user.id) {
+    if (myRoundsBtn) {
+      myRoundsBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+      myRoundsBtn.title = "View saved rounds";
+    }
+    if (myPlayersBtn) {
+      myPlayersBtn.classList.remove('opacity-40', 'cursor-not-allowed');
+      myPlayersBtn.title = "View player roster";
+    }
+
     const avatar = user.picture
       ? `<img src="${user.picture}" alt="${user.name || user.email}" class="w-6 h-6 rounded-full border border-amber-400 shadow-sm object-cover" />`
       : `<div class="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black text-[11px] flex items-center justify-center">${(user.name || user.email || 'U')[0].toUpperCase()}</div>`;
 
-    container.innerHTML = `
-      <div class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 rounded-xl px-2 py-0.5 shadow-sm">
-        ${avatar}
-        <span class="text-xs font-bold text-slate-200 max-w-[85px] truncate hidden sm:inline" title="${user.email}">${user.name || user.email}</span>
-        <button type="button" onclick="logout()" class="text-slate-400 hover:text-rose-400 transition ml-0.5 p-0.5" title="Sign out">
-          <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
-        </button>
-      </div>
-    `;
+    if (container) {
+      container.innerHTML = `
+        <div class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 rounded-xl px-2 py-0.5 shadow-sm">
+          <div class="flex items-center gap-1.5 cursor-pointer hover:opacity-80 transition" onclick="openMyProfileModal()" title="Edit My Profile">
+            ${avatar}
+            <span class="text-xs font-bold text-slate-200 max-w-[85px] truncate hidden sm:inline" title="${user.email}">${state.currentPlayer?.nickname || user.name || user.email}</span>
+          </div>
+          <button type="button" onclick="logout()" class="text-slate-400 hover:text-rose-400 transition ml-0.5 p-0.5" title="Sign out">
+            <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      `;
+    }
   } else {
-    container.innerHTML = `
-      <a href="/auth/google" class="py-1 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
-        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9z"/><path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16.5C3.7 20.3 7.5 23.5 12 23.5z"/></svg>
-        <span>Sign in</span>
-      </a>
-    `;
+    if (myRoundsBtn) {
+      myRoundsBtn.classList.add('opacity-40', 'cursor-not-allowed');
+      myRoundsBtn.title = "Sign in to view My Rounds";
+    }
+    if (myPlayersBtn) {
+      myPlayersBtn.classList.add('opacity-40', 'cursor-not-allowed');
+      myPlayersBtn.title = "Sign in to view My Players";
+    }
+
+    if (container) {
+      container.innerHTML = `
+        <a href="/auth/google" class="py-1 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9z"/><path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16.5C3.7 20.3 7.5 23.5 12 23.5z"/></svg>
+          <span>Sign in</span>
+        </a>
+      `;
+    }
   }
   initIcons();
+}
+
+function onMyRoundsClick() {
+  if (!state.currentUser) {
+    showToast("Please sign in with Google to view My Rounds.", "lock");
+    return;
+  }
+  openMyRoundsModal();
+}
+
+function onMyPlayersClick() {
+  if (!state.currentUser) {
+    showToast("Please sign in with Google to view My Players.", "lock");
+    return;
+  }
+  openMyPlayersModal();
 }
 
 async function logout() {
@@ -2792,6 +3088,7 @@ async function logout() {
     console.error(e);
   }
   state.currentUser = null;
+  state.currentPlayer = null;
   window.location.reload();
 }
 
@@ -2952,17 +3249,23 @@ function renderMyRoundsList(rounds) {
 
   listEl.innerHTML = rounds.map(r => {
     const isCurrent = r.id === currentRId;
-    const isLocked = Boolean(r.is_finished);
+    const isFinished = Boolean(r.is_finished);
+    const isOwner = Boolean(r.is_owner);
     const dateStr = r.created_at ? r.created_at.substring(0, 10) : '';
     const creator = r.creator_name || r.creator_email || 'Public';
+
+    const statusBadge = isFinished
+      ? `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700 shrink-0">Finished</span>`
+      : `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>ONGOING</span>`;
 
     return `
       <div class="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-800/50 transition ${isCurrent ? 'bg-amber-500/10 border-l-4 border-amber-500' : ''}">
         <div class="flex-1 min-w-0 cursor-pointer" onclick="openSavedRound('${r.id}')">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
+            ${!isFinished ? '<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" title="Ongoing"></span>' : ''}
             <span class="text-sm font-black text-white truncate">${r.round_name || 'Sunday Golf Match'}</span>
             ${isCurrent ? '<span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">Active</span>' : ''}
-            ${isLocked ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 border border-amber-500/30">Locked</span>' : ''}
+            ${statusBadge}
           </div>
           <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
             <span>${r.course_name || 'Golf Course'}</span>
@@ -2977,9 +3280,11 @@ function renderMyRoundsList(rounds) {
           <button type="button" onclick="openSavedRound('${r.id}')" class="py-1 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs transition border border-slate-700 flex items-center gap-1">
             <span>Open</span>
           </button>
-          <button type="button" onclick="deleteSavedRound('${r.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round">
-            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-          </button>
+          ${isOwner ? `
+            <button type="button" onclick="deleteSavedRound('${r.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          ` : ''}
         </div>
       </div>
     `;
@@ -3019,6 +3324,181 @@ async function deleteSavedRound(rId) {
   } catch (err) {
     console.error("Error deleting round:", err);
     showToast("Network error.", "error");
+  }
+}
+
+// ================= PROFILE & FIRST-TIME LINKING MODALS =================
+function openLinkPlayerModal() {
+  const modal = document.getElementById('link-player-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  switchLinkMode('existing');
+  populateLinkExistingSelect();
+}
+
+function closeLinkPlayerModal() {
+  const modal = document.getElementById('link-player-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function switchLinkMode(mode) {
+  const btnExisting = document.getElementById('tab-btn-link-existing');
+  const btnCreate = document.getElementById('tab-btn-link-create');
+  const viewExisting = document.getElementById('link-existing-view');
+  const viewCreate = document.getElementById('link-create-view');
+
+  if (mode === 'existing') {
+    if (btnExisting) btnExisting.className = "flex-1 py-2 rounded-lg bg-amber-500 text-slate-950 font-black transition";
+    if (btnCreate) btnCreate.className = "flex-1 py-2 rounded-lg text-slate-400 hover:text-white transition";
+    if (viewExisting) viewExisting.classList.remove('hidden');
+    if (viewCreate) viewCreate.classList.add('hidden');
+  } else {
+    if (btnCreate) btnCreate.className = "flex-1 py-2 rounded-lg bg-amber-500 text-slate-950 font-black transition";
+    if (btnExisting) btnExisting.className = "flex-1 py-2 rounded-lg text-slate-400 hover:text-white transition";
+    if (viewCreate) viewCreate.classList.remove('hidden');
+    if (viewExisting) viewExisting.classList.add('hidden');
+    const nickInp = document.getElementById('link-new-nick');
+    if (nickInp && !nickInp.value && state.currentUser) {
+      nickInp.value = (state.currentUser.given_name || state.currentUser.name?.split(' ')[0] || '').toUpperCase();
+    }
+  }
+}
+
+async function populateLinkExistingSelect() {
+  const select = document.getElementById('link-existing-select');
+  if (!select) return;
+  select.innerHTML = '<option value="">Loading player directory...</option>';
+  try {
+    const res = await fetch('/api/players');
+    if (res.ok) {
+      const players = await res.json();
+      if (!players || players.length === 0) {
+        select.innerHTML = '<option value="">No existing players found</option>';
+        return;
+      }
+      select.innerHTML = players.map(p => {
+        return `<option value="${p.id}">${p.nickname} (${p.first_name || ''} ${p.last_name || ''}) - HCP ${p.current_handicap || p.initial_handicap || 18.0}</option>`;
+      }).join('');
+    }
+  } catch (e) {
+    select.innerHTML = '<option value="">Error loading players</option>';
+  }
+}
+
+async function confirmLinkExistingPlayer() {
+  const select = document.getElementById('link-existing-select');
+  const playerId = select?.value;
+  if (!playerId) {
+    showToast("Please select a player profile to link.", "error");
+    return;
+  }
+  try {
+    const res = await fetch('/api/me/link-player', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_id: playerId })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      state.currentPlayer = data.player;
+      closeLinkPlayerModal();
+      showToast(`Account linked to player "${data.player?.nickname || ''}"!`);
+      await fetchCurrentUser();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to link player profile.", "error");
+    }
+  } catch (e) {
+    showToast("Network error linking player profile.", "error");
+  }
+}
+
+async function confirmCreateMyPlayer() {
+  const nick = document.getElementById('link-new-nick')?.value.trim();
+  const hcp = parseFloat(document.getElementById('link-new-hcp')?.value) || 18.0;
+  if (!nick) {
+    showToast("Please enter a nickname.", "error");
+    return;
+  }
+  try {
+    const res = await fetch('/api/me/create-player', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname: nick, handicap: hcp })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      state.currentPlayer = data.player;
+      closeLinkPlayerModal();
+      showToast(`Player profile "${nick}" created!`);
+      await fetchCurrentUser();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to create player profile.", "error");
+    }
+  } catch (e) {
+    showToast("Network error creating player profile.", "error");
+  }
+}
+
+function openMyProfileModal() {
+  const modal = document.getElementById('my-profile-modal');
+  if (!modal) return;
+  const p = state.currentPlayer || {};
+  const u = state.currentUser || {};
+  const nickInp = document.getElementById('profile-nick');
+  const fnInp = document.getElementById('profile-fn');
+  const lnInp = document.getElementById('profile-ln');
+  const hcpInp = document.getElementById('profile-hcp');
+
+  if (nickInp) nickInp.value = p.nickname || u.given_name || (u.name?.split(' ')[0] || '');
+  if (fnInp) fnInp.value = p.first_name || u.given_name || (u.name?.split(' ')[0] || '');
+  if (lnInp) lnInp.value = p.last_name || u.family_name || (u.name?.split(' ').slice(1).join(' ') || '');
+  if (hcpInp) hcpInp.value = (p.current_handicap !== undefined && p.current_handicap !== null) ? p.current_handicap : 18.0;
+
+  modal.classList.remove('hidden');
+}
+
+function closeMyProfileModal() {
+  const modal = document.getElementById('my-profile-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitUpdateMyProfile(e) {
+  e.preventDefault();
+  const nick = document.getElementById('profile-nick')?.value.trim();
+  const fn = document.getElementById('profile-fn')?.value.trim();
+  const ln = document.getElementById('profile-ln')?.value.trim();
+  const hcp = parseFloat(document.getElementById('profile-hcp')?.value) || 18.0;
+
+  if (!nick) {
+    showToast("Nickname is required.", "error");
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/me/player', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nickname: nick,
+        first_name: fn,
+        last_name: ln,
+        current_handicap: hcp
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      state.currentPlayer = data.player;
+      closeMyProfileModal();
+      showToast("Player profile updated!");
+      renderAuth();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to update profile.", "error");
+    }
+  } catch (err) {
+    showToast("Network error updating profile.", "error");
   }
 }
 

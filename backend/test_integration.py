@@ -205,21 +205,23 @@ assert "white" in tee_ids and "red" in tee_ids and "blue" in tee_ids
 print("PASS: Courses include Tees with slope and rating")
 
 # 16. Create New Player via POST /api/players
+import time
+unique_nick = f"TIGER_{int(time.time())}"
 r = invoke_request("POST", "/api/players", body={
-    "nickname": "TIGER",
+    "nickname": unique_nick,
     "first_name": "Eldrick",
-    "last_name": "Woods",
+    "last_name": f"Woods_{int(time.time())}",
     "handicap": 0.0
 }, headers=auth_headers)
 assert r["status"] == 200
 new_ply = r["json"]
-assert new_ply["nickname"] == "TIGER"
+assert new_ply["nickname"] == unique_nick
 tiger_id = new_ply["id"]
 print(f"PASS: Created player {new_ply['nickname']} ({tiger_id})")
 
 # 17. Verify duplicate player creation returns 409 Conflict
 r = invoke_request("POST", "/api/players", body={
-    "nickname": "TIGER",
+    "nickname": unique_nick,
     "first_name": "Eldrick",
     "last_name": "Woods",
     "handicap": 0.0
@@ -248,4 +250,54 @@ after_ids = [p["id"] for p in r_after["json"]]
 assert tiger_id not in after_ids
 print("PASS: Removed player from user roster")
 
-print("\nALL 20 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")
+# 21. Verify Round Auto-Naming and Duplicate Sequence Numbering
+r_first = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
+assert r_first["status"] == 200
+first_name = r_first["json"]["round_name"]
+assert "Krungthep Kreetha Golf Course" in first_name
+assert "Demo" in first_name or "Golfer" in first_name
+
+r_second = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
+assert r_second["status"] == 200
+second_name = r_second["json"]["round_name"]
+
+# Verify sequence increments
+first_num = 1 if not first_name.split()[-1].isdigit() else int(first_name.split()[-1])
+second_num = int(second_name.split()[-1])
+assert second_num == first_num + 1
+print(f"PASS: Round auto-naming and duplicate sequence verified: '{first_name}' (seq {first_num}) -> '{second_name}' (seq {second_num})")
+
+# 22. Verify Link Player Overwrites First/Last Name with Google Info
+# Create an unlinked player first
+dummy_nick = f"ALICE_{int(time.time())}"
+r_alice = invoke_request("POST", "/api/players", body={
+    "nickname": dummy_nick,
+    "first_name": "OldAlice",
+    "last_name": "OldSmith",
+    "handicap": 14.5
+}, headers=auth_headers)
+assert r_alice["status"] == 200
+alice_id = r_alice["json"]["id"]
+
+# Link user to this player profile
+r_link = invoke_request("POST", "/api/me/link-player", body={"player_id": alice_id}, headers=auth_headers)
+assert r_link["status"] == 200
+linked_ply = r_link["json"]["player"]
+assert linked_ply["nickname"] == dummy_nick
+assert linked_ply["first_name"] == "Demo"
+assert linked_ply["last_name"] == "Golfer"
+print(f"PASS: Linking account overwrote first and last name with Google credentials: {linked_ply['first_name']} {linked_ply['last_name']}")
+
+# 23. Verify Update Player Profile (Nickname & Handicap)
+r_prof = invoke_request("POST", "/api/me/player", body={
+    "nickname": f"PRO_{dummy_nick}",
+    "first_name": "Demo",
+    "last_name": "Golfer",
+    "current_handicap": 9.2
+}, headers=auth_headers)
+assert r_prof["status"] == 200
+assert r_prof["json"]["player"]["nickname"] == f"PRO_{dummy_nick}"
+assert float(r_prof["json"]["player"]["current_handicap"]) == 9.2
+print(f"PASS: Player profile nickname and handicap updated: {r_prof['json']['player']['nickname']} (HCP {r_prof['json']['player']['current_handicap']})")
+
+print("\nALL 23 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")

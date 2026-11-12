@@ -365,14 +365,36 @@ class Database:
         return self.get_course(course_id)
 
     # ================= ROUNDS CRUD =================
+    def find_rounds_by_name_prefix(self, prefix: str) -> List[Dict[str, Any]]:
+        return self.query_all("SELECT id, name FROM rounds WHERE name LIKE ? ORDER BY created_at ASC", (f"{prefix}%",))
+
     def create_round(self, round_data: Dict[str, Any], owner_id: Optional[str] = None) -> Dict[str, Any]:
         now = time.time()
         r_id = round_data.get("id") or f"r-{int(now)}-{os.urandom(3).hex()}"
         
         c_name = round_data.get("course_name") or "Krungthep Kreetha Golf Course"
         date_str = time.strftime("%Y-%m-%d", time.localtime(now))
-        default_name = f"{date_str} - {c_name}"
-        name = round_data.get("name") or default_name
+
+        # Auto-name format: YYYY-MM-DD [Course Name] - [Creator First Name]
+        creator_first = "Guest"
+        if owner_id:
+            user = self.get_user(owner_id)
+            if user:
+                parts = (user.get("name") or "").strip().split()
+                creator_first = parts[0] if parts else "Golfer"
+                p_rec = self.find_player_by_user_id(owner_id)
+                if p_rec and p_rec.get("first_name"):
+                    creator_first = p_rec["first_name"]
+
+        base_name = f"{date_str} {c_name} - {creator_first}"
+        if not round_data.get("name"):
+            existing = self.find_rounds_by_name_prefix(base_name)
+            if not existing:
+                name = base_name
+            else:
+                name = f"{base_name} {len(existing) + 1}"
+        else:
+            name = round_data["name"]
 
         course_id = round_data.get("course_id") or "course-krungthep-kreetha"
         starting_hole = int(round_data.get("starting_hole") or 1)
@@ -417,21 +439,40 @@ class Database:
         return row
 
     def list_user_rounds(self, user_id: str) -> List[Dict[str, Any]]:
-        rows = self.query_all("SELECT * FROM rounds WHERE owner_id = ? ORDER BY updated_at DESC", (user_id,))
+        linked_p = self.find_player_by_user_id(user_id)
+        ply_id = linked_p["id"] if linked_p else None
+
+        rows = self.query_all("SELECT * FROM rounds ORDER BY updated_at DESC")
+        user_rounds = []
         for r in rows:
-            for field in ["game_settings", "players", "holes", "scores"]:
-                if isinstance(r.get(field), str):
-                    try:
-                        r[field] = json.loads(r[field])
-                    except Exception:
-                        r[field] = {} if field in ["game_settings", "scores"] else []
-            if isinstance(r.get("selected_tee"), str):
+            is_owner = (r.get("owner_id") == user_id)
+            is_player = False
+
+            p_data = r.get("players")
+            if isinstance(p_data, str):
                 try:
-                    r["selected_tee"] = json.loads(r["selected_tee"])
+                    p_data = json.loads(p_data)
                 except Exception:
-                    r["selected_tee"] = DEFAULT_TEES[2]
-            r["is_finished"] = bool(r.get("is_finished", 0))
-        return rows
+                    p_data = []
+            if ply_id and isinstance(p_data, list):
+                is_player = any(p.get("player_id") == ply_id or p.get("id") == ply_id for p in p_data)
+
+            if is_owner or is_player:
+                for field in ["game_settings", "players", "holes", "scores"]:
+                    if isinstance(r.get(field), str):
+                        try:
+                            r[field] = json.loads(r[field])
+                        except Exception:
+                            r[field] = {} if field in ["game_settings", "scores"] else []
+                if isinstance(r.get("selected_tee"), str):
+                    try:
+                        r["selected_tee"] = json.loads(r["selected_tee"])
+                    except Exception:
+                        r["selected_tee"] = DEFAULT_TEES[2]
+                r["is_finished"] = bool(r.get("is_finished", 0))
+                r["is_owner"] = is_owner
+                user_rounds.append(r)
+        return user_rounds
 
     def get_latest_round(self) -> Optional[Dict[str, Any]]:
         row = self.query_one("SELECT * FROM rounds ORDER BY updated_at DESC LIMIT 1")
@@ -440,15 +481,20 @@ class Database:
         return self.get_round(row["id"])
 
     def get_latest_active_round(self, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Returns the latest unfinished round for user or system"""
-        if user_id:
-            row = self.query_one("SELECT * FROM rounds WHERE owner_id = ? AND is_finished = 0 ORDER BY updated_at DESC LIMIT 1", (user_id,))
-            if row:
-                return self.get_round(row["id"])
-        # Fallback to latest global unfinished
-        row = self.query_one("SELECT * FROM rounds WHERE is_finished = 0 ORDER BY updated_at DESC LIMIT 1")
-        if row:
-            return self.get_round(row["id"])
+        """Returns the latest unfinished round for user (as owner or lineup player)"""
+        if not user_id:
+            return None
+        linked_p = self.find_player_by_user_id(user_id)
+        ply_id = linked_p["id"] if linked_p else None
+
+        rows = self.query_all("SELECT * FROM rounds WHERE is_finished = 0 ORDER BY updated_at DESC")
+        for r in rows:
+            if r.get("owner_id") == user_id:
+                return self.get_round(r["id"])
+            if ply_id:
+                p_str = r.get("players")
+                if isinstance(p_str, str) and ply_id in p_str:
+                    return self.get_round(r["id"])
         return None
 
     def update_round(self, round_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -519,6 +565,11 @@ class Database:
             return None
         return self.query_one("SELECT * FROM players WHERE LOWER(email) = LOWER(?)", (email.strip(),))
 
+    def find_player_by_user_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        if not user_id:
+            return None
+        return self.query_one("SELECT * FROM players WHERE user_id = ?", (user_id,))
+
     def find_player_by_nickname_or_name(self, nickname: str, first_name: str = "", last_name: str = "") -> Optional[Dict[str, Any]]:
         row = self.query_one("SELECT * FROM players WHERE LOWER(nickname) = LOWER(?)", (nickname.strip(),))
         if row:
@@ -550,7 +601,7 @@ class Database:
         return self.get_player(p_id)  # type: ignore
 
     def link_user_to_player(self, user_id: str, email: str, name: str) -> Optional[Dict[str, Any]]:
-        """Ensures a user is linked 1:1 to a player profile"""
+        """Ensures a user is linked 1:1 to a player profile, overwriting first/last name with Google credentials"""
         if not email:
             return None
         p = self.find_player_by_email(email)
@@ -560,18 +611,51 @@ class Database:
         last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
 
         if p:
-            if not p.get("user_id"):
-                self.execute("UPDATE players SET user_id = ?, updated_at = ? WHERE id = ?", (user_id, now, p["id"]))
+            self.execute("UPDATE players SET user_id = ?, first_name = ?, last_name = ?, updated_at = ? WHERE id = ?", (user_id, first_name, last_name, now, p["id"]))
             self.add_user_player(user_id, p["id"])
             return self.get_player(p["id"])
-        else:
-            nick = first_name.upper()
-            existing_nick = self.query_one("SELECT * FROM players WHERE LOWER(nickname) = LOWER(?)", (nick,))
-            if existing_nick:
-                nick = f"{first_name.upper()} {last_name[:1].upper()}" if last_name else f"{first_name.upper()} 1"
-            new_p = self.create_player(nick, first_name, last_name, email=email, user_id=user_id, current_handicap=18.0)
-            self.add_user_player(user_id, new_p["id"])
-            return new_p
+        return None
+
+    def link_user_to_existing_player(self, user_id: str, player_id: str, google_name: str, email: str) -> Optional[Dict[str, Any]]:
+        """Links user to an existing player profile and overwrites first_name and last_name with Google credentials"""
+        p = self.get_player(player_id)
+        if not p:
+            return None
+        now = time.time()
+        parts = google_name.strip().split()
+        first_name = parts[0] if parts else google_name
+        last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
+
+        self.execute(
+            """
+            UPDATE players 
+            SET user_id = ?, email = ?, first_name = ?, last_name = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (user_id, email, first_name, last_name, now, player_id)
+        )
+        self.add_user_player(user_id, player_id)
+        return self.get_player(player_id)
+
+    def update_player_profile(self, player_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        now = time.time()
+        allowed = ["nickname", "first_name", "last_name", "current_handicap"]
+        set_clauses = []
+        params = []
+        for k in allowed:
+            if k in updates and updates[k] is not None:
+                set_clauses.append(f"{k} = ?")
+                if k == "current_handicap":
+                    params.append(round(float(updates[k]), 1))
+                else:
+                    params.append(str(updates[k]).strip())
+        if not set_clauses:
+            return self.get_player(player_id)
+        set_clauses.append("updated_at = ?")
+        params.append(now)
+        params.append(player_id)
+        self.execute(f"UPDATE players SET {', '.join(set_clauses)} WHERE id = ?", tuple(params))
+        return self.get_player(player_id)
 
     def add_user_player(self, user_id: str, player_id: str) -> bool:
         now = time.time()

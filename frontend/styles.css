@@ -290,3 +290,131 @@ html {
   user-select: none;
 }
 
+/* ================= FAIRWAY GOLF SCORECARD LIGHT THEME ================= */
+html.theme-fairway,
+body.theme-fairway {
+  background-color: #f3f6f2 !important;
+  color: #152019 !important;
+}
+
+.theme-fairway header {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #c4cec5 !important;
+  box-shadow: 0 4px 15px rgba(23, 51, 28, 0.05) !important;
+}
+
+.theme-fairway main {
+  color: #152019 !important;
+}
+
+.theme-fairway .bg-slate-950,
+.theme-fairway .bg-slate-900,
+.theme-fairway .bg-slate-900\/90,
+.theme-fairway .bg-slate-900\/95,
+.theme-fairway .bg-slate-950\/90,
+.theme-fairway .bg-slate-950\/85,
+.theme-fairway .bg-slate-950\/70 {
+  background-color: #ffffff !important;
+  color: #152019 !important;
+  border-color: #c4cec5 !important;
+}
+
+.theme-fairway .bg-slate-900\/80,
+.theme-fairway .bg-slate-900\/60,
+.theme-fairway .bg-slate-950\/50,
+.theme-fairway .bg-slate-950\/60 {
+  background-color: #edf4e9 !important;
+  border-color: #abbca8 !important;
+  color: #152019 !important;
+}
+
+.theme-fairway .border-slate-800,
+.theme-fairway .border-slate-800\/80,
+.theme-fairway .border-slate-800\/60,
+.theme-fairway .border-slate-700,
+.theme-fairway .border-slate-700\/80 {
+  border-color: #c4cec5 !important;
+}
+
+.theme-fairway .text-white {
+  color: #152019 !important;
+}
+
+.theme-fairway .text-slate-100,
+.theme-fairway .text-slate-200,
+.theme-fairway .text-slate-300 {
+  color: #152019 !important;
+}
+
+.theme-fairway .text-slate-400,
+.theme-fairway .text-slate-500 {
+  color: #34483a !important;
+}
+
+/* Fairway Accent: Deep Augusta Green */
+.theme-fairway .bg-amber-500 {
+  background-color: #16452e !important;
+  color: #ffffff !important;
+}
+
+.theme-fairway .text-amber-400,
+.theme-fairway .text-amber-300,
+.theme-fairway .text-amber-500 {
+  color: #16452e !important;
+}
+
+.theme-fairway .border-amber-400,
+.theme-fairway .border-amber-500,
+.theme-fairway .border-amber-500\/40 {
+  border-color: #16452e !important;
+}
+
+/* Stepper dial buttons */
+.theme-fairway .dial-btn {
+  background-color: #f0f5ee !important;
+  color: #16452e !important;
+  border-color: #c4cec5 !important;
+}
+.theme-fairway .dial-btn:hover {
+  background-color: #16452e !important;
+  color: #ffffff !important;
+}
+
+/* Table Headers in Fairway */
+.theme-fairway th,
+.theme-fairway thead tr {
+  background-color: #edf4e9 !important;
+  color: #16452e !important;
+  border-bottom: 1px solid #c4cec5 !important;
+}
+
+.theme-fairway td {
+  border-color: #c4cec5 !important;
+}
+
+.theme-fairway tr:hover {
+  background-color: #f0f5ee !important;
+}
+
+/* Bottom mobile nav */
+.theme-fairway .mobile-bottom-nav {
+  background-color: #ffffff !important;
+  border-top-color: #c4cec5 !important;
+  box-shadow: 0 -4px 15px rgba(23, 51, 28, 0.06) !important;
+}
+
+/* Form inputs & selects */
+.theme-fairway input[type="text"],
+.theme-fairway input[type="number"],
+.theme-fairway input[type="date"],
+.theme-fairway select {
+  background-color: #ffffff !important;
+  color: #152019 !important;
+  border-color: #87998c !important;
+}
+
+.theme-fairway input:focus,
+.theme-fairway select:focus {
+  border-color: #16452e !important;
+}
+
