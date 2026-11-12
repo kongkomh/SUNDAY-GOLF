@@ -6,5 +6,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.log
+*.db
+data/*.db
 backend/__pycache__/
 backend/engine original.py

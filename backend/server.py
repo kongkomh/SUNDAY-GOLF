@@ -1,6 +1,6 @@
 """
-Sunday Golf Tracker - Real-Time HTTP & Server-Sent Events (SSE) Server
-Python 3 standard library only.
+Sunday Golf Tracker - Multi-Instance HTTP & Server-Sent Events (SSE) Server
+Supports Google OAuth 2.0, Multi-Round Instances, PostgreSQL & SQLite.
 """
 
 import http.server
@@ -12,7 +12,8 @@ import time
 import copy
 import re
 import threading
-from urllib.parse import urlparse
+import urllib.parse
+from http import cookies
 from typing import Dict, List, Any, Optional
 
 from engine import (
@@ -23,45 +24,13 @@ from engine import (
     DEFAULT_PLAYER_COLORS,
     DEFAULT_PLAYER_NAMES
 )
+from db import db
+import auth
 
-PORT = 8080
+PORT = int(os.environ.get("PORT", 8080))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
-DATA_FILE = os.path.join(PROJECT_DIR, "data", "tournament_state.json")
-COURSES_FILE = os.path.join(PROJECT_DIR, "data", "courses.json")
 FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
-UPLOADS_DIR = os.path.join(FRONTEND_DIR, "uploads")
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-
-INITIAL_DATA = {
-    "tournament_name": "Sunday Golf Match",
-    "course_id": "course-krungthep-kreetha",
-    "course_name": "Krungthep Kreetha Golf Course",
-    "game_settings": DEFAULT_SETTINGS,
-    "players": DEFAULT_PLAYERS,
-    "holes": DEFAULT_HOLES,
-    "scores": {}
-}
-
-
-def load_courses_database() -> List[Dict[str, Any]]:
-    if os.path.exists(COURSES_FILE):
-        try:
-            with open(COURSES_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[COURSES] Error loading {COURSES_FILE}: {e}")
-    return []
-
-
-def save_courses_database(courses: List[Dict[str, Any]]) -> bool:
-    try:
-        with open(COURSES_FILE, "w", encoding="utf-8") as f:
-            json.dump(courses, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception as e:
-        print(f"[COURSES] Error saving {COURSES_FILE}: {e}")
-        return False
 
 
 def copy_dict(d):
@@ -83,60 +52,84 @@ def sanitize_scores_with_players(scores: Dict[str, Any], valid_player_ids: set) 
     return clean_scores
 
 
-class TournamentStore:
-    def __init__(self, filepath: str):
-        self.filepath = filepath
+class RoundManager:
+    """Manages active round memory, DB persistence, and SSE broadcasts"""
+    def __init__(self):
         self.lock = threading.Lock()
-        self.subscribers: List[http.server.BaseHTTPRequestHandler] = []
+        self.subscribers: Dict[str, List[http.server.BaseHTTPRequestHandler]] = {}
         self.subscribers_lock = threading.Lock()
-        self.data = self._load()
 
-    def _load(self) -> Dict[str, Any]:
-        if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                    if "players" not in loaded or not loaded["players"]:
-                        loaded["players"] = copy.deepcopy(DEFAULT_PLAYERS)
-                    if "game_settings" not in loaded:
-                        loaded["game_settings"] = copy.deepcopy(DEFAULT_SETTINGS)
-                    if "holes" not in loaded or not loaded["holes"]:
-                        loaded["holes"] = copy.deepcopy(DEFAULT_HOLES)
-
-                    valid_ids = set(p["id"] for p in loaded["players"])
-                    if "scores" in loaded and isinstance(loaded["scores"], dict):
-                        loaded["scores"] = sanitize_scores_with_players(loaded["scores"], valid_ids)
-
-                    return loaded
-            except Exception as e:
-                print(f"[STORE] Error reading {self.filepath}: {e}, using initial data.")
-        self._save(INITIAL_DATA)
-        return copy_dict(INITIAL_DATA)
-
-    def _save(self, data: Dict[str, Any]):
-        os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-        with open(self.filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-    def get_state(self) -> Dict[str, Any]:
+    def get_or_create_default_round(self, owner_id: Optional[str] = None) -> Dict[str, Any]:
         with self.lock:
-            return calculate_tournament_state(self.data)
+            latest = db.get_latest_round()
+            if latest:
+                return latest
+            return self.create_fresh_round(owner_id)
 
-    def get_raw_data(self) -> Dict[str, Any]:
-        with self.lock:
-            return copy_dict(self.data)
+    def create_fresh_round(self, owner_id: Optional[str] = None, course_id: Optional[str] = None) -> Dict[str, Any]:
+        courses = db.list_courses()
+        selected_course = None
+        if course_id:
+            selected_course = next((c for c in courses if c["id"] == course_id), None)
+        if not selected_course and courses:
+            selected_course = courses[0]
 
-    def set_hole_scores(self, hole_num: int, score_data: Optional[Dict[str, Any]], team_a: Optional[List[str]] = None, team_b: Optional[List[str]] = None) -> Dict[str, Any]:
+        c_name = selected_course["name"] if selected_course else "Krungthep Kreetha Golf Course"
+        c_id = selected_course["id"] if selected_course else "course-krungthep-kreetha"
+        holes = copy.deepcopy(selected_course.get("holes") or DEFAULT_HOLES) if selected_course else copy.deepcopy(DEFAULT_HOLES)
+
+        now = time.time()
+        date_str = time.strftime("%Y-%m-%d", time.localtime(now))
+        round_name = f"{date_str} - {c_name}"
+
+        round_data = {
+            "name": round_name,
+            "course_id": c_id,
+            "course_name": c_name,
+            "starting_hole": 1,
+            "is_finished": False,
+            "game_settings": copy.deepcopy(DEFAULT_SETTINGS),
+            "players": copy.deepcopy(DEFAULT_PLAYERS),
+            "holes": holes,
+            "scores": {}
+        }
+        return db.create_round(round_data, owner_id=owner_id)
+
+    def get_round_state(self, round_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        round_data = db.get_round(round_id)
+        if not round_data:
+            return None
+
+        state = calculate_tournament_state(round_data)
+        state["round_id"] = round_id
+        state["id"] = round_id
+        state["round_name"] = round_data.get("name")
+        state["owner_id"] = round_data.get("owner_id")
+        state["is_finished"] = bool(round_data.get("is_finished", False))
+        state["is_owner"] = bool(user_id and round_data.get("owner_id") and user_id == round_data.get("owner_id"))
+        state["starting_hole"] = round_data.get("starting_hole", 1)
+        state["created_at"] = round_data.get("created_at")
+        state["updated_at"] = round_data.get("updated_at")
+        return state
+
+    def set_hole_scores(self, round_id: str, hole_num: int, score_data: Optional[Dict[str, Any]],
+                        team_a: Optional[List[str]] = None, team_b: Optional[List[str]] = None,
+                        user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
-            valid_ids = set(p["id"] for p in self.data.get("players", []))
+            round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            if round_data.get("is_finished"):
+                return {"error": "Round is finished and locked"}
+
+            scores = round_data.get("scores") or {}
+            valid_ids = set(p["id"] for p in round_data.get("players", []))
             h_key = str(hole_num)
-            if "scores" not in self.data:
-                self.data["scores"] = {}
 
             if score_data is None or len(score_data) == 0:
-                self.data["scores"].pop(h_key, None)
+                scores.pop(h_key, None)
             else:
-                current_entry = self.data["scores"].setdefault(h_key, {})
+                current_entry = scores.setdefault(h_key, {})
                 if "scores" not in current_entry:
                     current_entry["scores"] = {}
                 clean_scores = {pid: v for pid, v in score_data.items() if pid in valid_ids}
@@ -147,170 +140,119 @@ class TournamentStore:
                 if team_b is not None:
                     current_entry["team_b"] = [pid for pid in team_b if pid in valid_ids]
 
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
+            round_data["scores"] = scores
+            db.update_round(round_id, {"scores": scores})
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "score_update", state)
+            return state
 
-        self.broadcast_event("score_update", state)
-        return state
-
-    def update_players(self, players_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def update_settings(self, round_id: str, new_settings: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
+            round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            if round_data.get("is_finished"):
+                return {"error": "Round is finished and locked"}
+
+            # Support both flat and nested game_settings dictionary
+            merged_settings = dict(new_settings)
+            if "game_settings" in new_settings and isinstance(new_settings["game_settings"], dict):
+                merged_settings.update(new_settings["game_settings"])
+
+            settings = round_data.get("game_settings") or copy.deepcopy(DEFAULT_SETTINGS)
+            for k in ["cash_per_point", "hand_count", "turbo_multiplier", "penetrate_bonus", "birdie_point", "eagle_point", "albatross_point"]:
+                if k in merged_settings:
+                    try:
+                        settings[k] = int(merged_settings[k])
+                    except (ValueError, TypeError):
+                        pass
+
+            for k in ["turbo", "turbo_handicap", "penetrate"]:
+                if k in merged_settings:
+                    settings[k] = bool(merged_settings[k])
+
+            if "game_mode" in merged_settings:
+                mode = str(merged_settings["game_mode"]).upper()
+                if mode in ["TEAMS", "FREE_FOR_ALL", "WOLF"]:
+                    settings["game_mode"] = mode
+
+            if "default_teams" in merged_settings and isinstance(merged_settings["default_teams"], dict):
+                settings["default_teams"] = merged_settings["default_teams"]
+
+            starting_hole = int(merged_settings.get("starting_hole") or round_data.get("starting_hole") or 1)
+            if starting_hole not in (1, 10):
+                starting_hole = 1
+            settings["starting_hole"] = starting_hole
+
+            round_data["game_settings"] = settings
+            round_data["starting_hole"] = starting_hole
+
+            update_fields = {
+                "game_settings": settings,
+                "starting_hole": starting_hole
+            }
+            if "tournament_name" in new_settings and new_settings["tournament_name"]:
+                round_data["round_name"] = str(new_settings["tournament_name"]).strip()
+                update_fields["round_name"] = round_data["round_name"]
+
+            db.update_round(round_id, update_fields)
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "settings_update", state)
+            return state
+
+    def update_players(self, round_id: str, players_list: List[Dict[str, Any]], user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            if round_data.get("is_finished"):
+                return {"error": "Round is finished and locked"}
+
             clean_players = []
-            for idx, p in enumerate(players_list):
-                if idx >= 6:
-                    break
-                p_id = p.get("id") or f"p{idx+1}"
-                p_name = p.get("name") or DEFAULT_PLAYER_NAMES[min(idx, len(DEFAULT_PLAYER_NAMES)-1)]
-                p_color = p.get("color") or DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)]
-                p_out = int(p.get("hcp_out", 0) or 0)
-                p_in = int(p.get("hcp_in", 0) or 0)
-                p_def_team = p.get("default_team")
-                if p_def_team not in ("left", "right"):
-                    p_def_team = "left" if idx < (len(players_list) // 2) else "right"
+            for i, p in enumerate(players_list[:6]):
+                p_id = p.get("id") or f"p{i+1}"
+                name = str(p.get("name") or DEFAULT_PLAYER_NAMES[i]).strip()
+                color = str(p.get("color") or DEFAULT_PLAYER_COLORS[i])
+                try:
+                    hcp_out = max(0, min(18, int(p.get("hcp_out", 0))))
+                except Exception:
+                    hcp_out = 0
+                try:
+                    hcp_in = max(0, min(18, int(p.get("hcp_in", 0))))
+                except Exception:
+                    hcp_in = 0
+                team = p.get("default_team", "left" if i < 2 else "right")
                 clean_players.append({
                     "id": p_id,
-                    "name": p_name,
-                    "color": p_color,
-                    "hcp_out": max(0, p_out),
-                    "hcp_in": max(0, p_in),
-                    "default_team": p_def_team
+                    "name": name,
+                    "color": color,
+                    "hcp_out": hcp_out,
+                    "hcp_in": hcp_in,
+                    "default_team": team
                 })
 
-            while len(clean_players) < 3:
-                idx = len(clean_players)
-                p_def_team = "left" if idx < 2 else "right"
-                clean_players.append({
-                    "id": f"p{idx+1}",
-                    "name": DEFAULT_PLAYER_NAMES[min(idx, len(DEFAULT_PLAYER_NAMES)-1)],
-                    "color": DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)],
-                    "hcp_out": 0,
-                    "hcp_in": 0,
-                    "default_team": p_def_team
-                })
-
-            self.data["players"] = clean_players
             valid_ids = set(p["id"] for p in clean_players)
+            scores = round_data.get("scores") or {}
+            clean_scores = sanitize_scores_with_players(scores, valid_ids)
 
-            # Sanitize scores
-            if "scores" in self.data and isinstance(self.data["scores"], dict):
-                self.data["scores"] = sanitize_scores_with_players(self.data["scores"], valid_ids)
-                current_settings = self.data.get("game_settings", {})
-                if current_settings.get("game_mode") == "TEAMS":
-                    def_a = [p["id"] for p in clean_players if p.get("default_team") == "left"]
-                    def_b = [p["id"] for p in clean_players if p.get("default_team") == "right"]
-                    for h_key, h_data in self.data["scores"].items():
-                        if isinstance(h_data, dict):
-                            h_data["team_a"] = copy.deepcopy(def_a)
-                            h_data["team_b"] = copy.deepcopy(def_b)
+            db.update_round(round_id, {
+                "players": clean_players,
+                "scores": clean_scores
+            })
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "players_update", state)
+            return state
 
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
-
-        self.broadcast_event("players_update", state)
-        return state
-
-    def update_settings(self, settings_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def update_course(self, round_id: str, course_payload: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
-            if "tournament_name" in settings_payload:
-                self.data["tournament_name"] = str(settings_payload["tournament_name"]).strip()
-            
-            game_settings_in = settings_payload.get("game_settings") or settings_payload
-            current_settings = self.data.setdefault("game_settings", copy.deepcopy(DEFAULT_SETTINGS))
-            
-            for k in [
-                "game_mode", "hand_count", "cash_per_point", "currency",
-                "turbo", "turbo_multiplier", "turbo_handicap", "penetrate",
-                "penetrate_bonus", "birdie_point", "eagle_point", "albatross_point",
-                "default_teams"
-            ]:
-                if k in game_settings_in:
-                    current_settings[k] = game_settings_in[k]
+            round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            if round_data.get("is_finished"):
+                return {"error": "Round is finished and locked"}
 
-            # If default_teams map is provided, synchronize into players
-            if "default_teams" in game_settings_in and isinstance(game_settings_in["default_teams"], dict):
-                dt_map = game_settings_in["default_teams"]
-                for p in self.data.get("players", []):
-                    if p.get("id") in dt_map:
-                        choice = dt_map[p["id"]]
-                        if choice in ("left", "right"):
-                            p["default_team"] = choice
-
-                # In TEAMS mode, also update hole team assignments in scores to match new defaults
-                if current_settings.get("game_mode") == "TEAMS" and "scores" in self.data:
-                    def_a = [p["id"] for p in self.data.get("players", []) if p.get("default_team") == "left"]
-                    def_b = [p["id"] for p in self.data.get("players", []) if p.get("default_team") == "right"]
-                    for h_key, h_data in self.data["scores"].items():
-                        if isinstance(h_data, dict):
-                            h_data["team_a"] = copy.deepcopy(def_a)
-                            h_data["team_b"] = copy.deepcopy(def_b)
-
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
-
-        self.broadcast_event("settings_update", state)
-        return state
-
-    def create_new_course(self, course_payload: Dict[str, Any]) -> Dict[str, Any]:
-        with self.lock:
-            course_name = str(course_payload.get("course_name") or course_payload.get("name") or "Custom Golf Course").strip()
-            slug = re.sub(r'[^a-zA-Z0-9]+', '-', course_name.lower()).strip('-')
-            if not slug:
-                slug = "custom-course"
-            course_id = f"course-{slug}-{int(time.time())}"
-
-            holes_in = course_payload.get("holes") or []
-            clean_holes = []
-            for i in range(1, 19):
-                h_match = next((h for h in holes_in if int(h.get("hole", 0)) == i), None)
-                if h_match:
-                    clean_holes.append({
-                        "hole": i,
-                        "par": int(h_match.get("par", 4)),
-                        "handicap": int(h_match.get("handicap", i)),
-                        "is_turbo": bool(h_match.get("is_turbo", False))
-                    })
-                else:
-                    clean_holes.append({
-                        "hole": i,
-                        "par": 4,
-                        "handicap": i,
-                        "is_turbo": False
-                    })
-
-            new_course = {
-                "id": course_id,
-                "name": course_name,
-                "location": "Custom",
-                "holes": clean_holes
-            }
-
-            courses = load_courses_database()
-            courses.append(new_course)
-            save_courses_database(courses)
-
-            self.data["course_id"] = course_id
-            self.data["course_name"] = course_name
-            self.data["holes"] = clean_holes
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
-
-        self.broadcast_event("course_update", state)
-        return {
-            "state": state,
-            "courses": courses,
-            "new_course_id": course_id
-        }
-
-    def update_course(self, course_payload: Dict[str, Any]) -> Dict[str, Any]:
-        with self.lock:
-            if "course_id" in course_payload:
-                self.data["course_id"] = course_payload["course_id"]
-            if "course_name" in course_payload:
-                self.data["course_name"] = str(course_payload["course_name"]).strip()
+            c_id = course_payload.get("course_id") or round_data.get("course_id")
+            c_name = course_payload.get("course_name") or round_data.get("course_name")
 
             holes_in = course_payload.get("holes")
             clean_holes = []
@@ -322,177 +264,240 @@ class TournamentStore:
                         "handicap": int(h.get("handicap", 9)),
                         "is_turbo": bool(h.get("is_turbo", False))
                     })
-                self.data["holes"] = clean_holes
+            else:
+                clean_holes = round_data.get("holes", DEFAULT_HOLES)
 
-            # If this course exists in courses database, keep it synced
-            c_id = self.data.get("course_id")
+            # Keep global courses catalog synced if course exists
             if c_id:
-                courses = load_courses_database()
-                updated_c = False
-                for c in courses:
-                    if c.get("id") == c_id:
-                        if "course_name" in course_payload:
-                            c["name"] = str(course_payload["course_name"]).strip()
-                        if clean_holes:
-                            c["holes"] = copy_dict(clean_holes)
-                        updated_c = True
-                        break
-                if updated_c:
-                    save_courses_database(courses)
+                db.update_course(c_id, c_name, clean_holes)
 
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
+            db.update_round(round_id, {
+                "course_id": c_id,
+                "course_name": c_name,
+                "holes": clean_holes
+            })
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "course_update", state)
+            return state
 
-        self.broadcast_event("course_update", state)
-        return state
-
-    def reset_scores(self) -> Dict[str, Any]:
+    def finish_round(self, round_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
-            self.data["scores"] = {}
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
+            db.set_round_finished(round_id, True)
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "round_finished", state)
+            return state
 
-        self.broadcast_event("reset", state)
-        return state
-
-    def reset_to_default(self) -> Dict[str, Any]:
+    def unlock_round(self, round_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
-            self.data = copy_dict(INITIAL_DATA)
-            self.data["last_updated"] = time.time()
-            self._save(self.data)
-            state = calculate_tournament_state(self.data)
+            round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            owner = round_data.get("owner_id")
+            # Only owner (or anyone if no owner was assigned) can unlock
+            if owner and user_id != owner:
+                return {"error": "Only the round creator can unlock this round"}
 
-        self.broadcast_event("reset_default", state)
-        return state
+            db.set_round_finished(round_id, False)
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "round_unlocked", state)
+            return state
 
-    def register_subscriber(self, handler):
+    def reset_round_scores(self, round_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            if round_data.get("is_finished"):
+                return {"error": "Round is finished and locked"}
+
+            db.update_round(round_id, {"scores": {}})
+            state = self.get_round_state(round_id, user_id)
+            self.broadcast_event(round_id, "score_update", state)
+            return state
+
+    # ================= SSE BROADCASTING =================
+    def add_subscriber(self, round_id: str, handler: http.server.BaseHTTPRequestHandler):
         with self.subscribers_lock:
-            self.subscribers.append(handler)
+            self.subscribers.setdefault(round_id, []).append(handler)
 
-    def remove_subscriber(self, handler):
+    def remove_subscriber(self, round_id: str, handler: http.server.BaseHTTPRequestHandler):
         with self.subscribers_lock:
-            if handler in self.subscribers:
-                self.subscribers.remove(handler)
+            if round_id in self.subscribers and handler in self.subscribers[round_id]:
+                self.subscribers[round_id].remove(handler)
 
-    def broadcast_event(self, event_type: str, data: Dict[str, Any]):
+    def broadcast_event(self, round_id: str, event_type: str, data: Any):
+        with self.subscribers_lock:
+            targets = list(self.subscribers.get(round_id, []))
+
         payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n".encode("utf-8")
-        dead_clients = []
+        dead = []
+        for s in targets:
+            try:
+                s.wfile.write(payload)
+                s.wfile.flush()
+            except Exception:
+                dead.append(s)
+
         with self.subscribers_lock:
-            for client in self.subscribers:
-                try:
-                    client.wfile.write(payload)
-                    client.wfile.flush()
-                except Exception:
-                    dead_clients.append(client)
-            for dc in dead_clients:
-                if dc in self.subscribers:
-                    self.subscribers.remove(dc)
+            for d in dead:
+                if round_id in self.subscribers and d in self.subscribers[round_id]:
+                    self.subscribers[round_id].remove(d)
 
 
-store = TournamentStore(DATA_FILE)
+round_manager = RoundManager()
 
 
 class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
+        # Suppress verbose default request logs for clean output
         return
-
-    def handle(self):
-        try:
-            super().handle()
-        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError):
-            pass
-        except OSError as e:
-            if e.errno in (10053, 10054, 32, 104):
-                pass
-            else:
-                raise
-
-    def finish(self):
-        try:
-            if not self.wfile.closed:
-                self.wfile.flush()
-        except Exception:
-            pass
-        try:
-            self.wfile.close()
-        except Exception:
-            pass
-        try:
-            self.rfile.close()
-        except Exception:
-            pass
 
     def send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     def do_OPTIONS(self):
-        self.send_response(204)
+        self.send_response(200)
         self.send_cors_headers()
         self.end_headers()
 
-    def _get_content_type(self, filepath: str) -> str:
-        if filepath.endswith(".html"):
-            return "text/html"
-        elif filepath.endswith(".js"):
-            return "application/javascript"
-        elif filepath.endswith(".css"):
-            return "text/css"
-        elif filepath.endswith(".json"):
-            return "application/json"
-        elif filepath.endswith(".png"):
-            return "image/png"
-        elif filepath.endswith(".jpg") or filepath.endswith(".jpeg"):
-            return "image/jpeg"
-        elif filepath.endswith(".svg"):
-            return "image/svg+xml"
-        elif filepath.endswith(".webp"):
-            return "image/webp"
-        return "text/plain"
+    def get_current_user(self) -> Optional[Dict[str, Any]]:
+        cookie_header = self.headers.get("Cookie")
+        if not cookie_header:
+            return None
+        c = cookies.SimpleCookie()
+        try:
+            c.load(cookie_header)
+        except Exception:
+            return None
+        session_cookie = c.get("session_token")
+        if not session_cookie:
+            return None
+        user_id = auth.verify_session_token(session_cookie.value)
+        if not user_id:
+            return None
+        return db.get_user(user_id)
 
-    def do_HEAD(self):
-        """
-        Respond to HEAD requests (e.g. UptimeRobot, health checks) with headers only.
-        Prevents HTTP 501 Not Implemented errors.
-        """
-        parsed = urlparse(self.path)
+    def get_requested_round_id(self, parsed) -> str:
+        # 1. From path: /api/round/<round_id>/... or /round/<round_id>
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] == "round":
+            return parts[1]
+        if len(parts) >= 3 and parts[0] == "api" and parts[1] == "round":
+            return parts[2]
+
+        # 2. From query param: ?round=<round_id>
+        params = urllib.parse.parse_qs(parsed.query)
+        if "round" in params:
+            return params["round"][0]
+
+        # 3. Default to latest or fresh round
+        default_r = round_manager.get_or_create_default_round()
+        return default_r["id"]
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        user = self.get_current_user()
+        user_id = user["id"] if user else None
 
-        if path.startswith("/api/"):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_cors_headers()
+        # 1. Google OAuth endpoints
+        if path == "/auth/google":
+            # Build callback URI from Host header
+            host = self.headers.get("Host", f"localhost:{PORT}")
+            scheme = "https" if "up.railway.app" in host or self.headers.get("X-Forwarded-Proto") == "https" else "http"
+            redirect_uri = f"{scheme}://{host}/auth/google/callback"
+            auth_url = auth.get_google_auth_url(redirect_uri)
+            if auth_url:
+                self.send_response(302)
+                self.send_header("Location", auth_url)
+                self.end_headers()
+            else:
+                # If Google OAuth credentials not set, provide convenient demo login
+                self.send_response(302)
+                self.send_header("Location", "/auth/dev_login")
+                self.end_headers()
+            return
+
+        if path == "/auth/google/callback":
+            params = urllib.parse.parse_qs(parsed.query)
+            code = params.get("code", [None])[0]
+            host = self.headers.get("Host", f"localhost:{PORT}")
+            scheme = "https" if "up.railway.app" in host or self.headers.get("X-Forwarded-Proto") == "https" else "http"
+            redirect_uri = f"{scheme}://{host}/auth/google/callback"
+
+            if code:
+                user_info = auth.exchange_code_for_user(code, redirect_uri)
+                if user_info:
+                    saved_user = db.upsert_user(
+                        user_info["id"],
+                        user_info["email"],
+                        user_info["name"],
+                        user_info.get("picture")
+                    )
+                    token = auth.create_session_token(saved_user["id"])
+                    self.send_response(302)
+                    self.send_header("Set-Cookie", f"session_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+                    self.send_header("Location", "/")
+                    self.end_headers()
+                    return
+
+            self.send_response(302)
+            self.send_header("Location", "/?auth_error=1")
             self.end_headers()
             return
 
-        if path == "/" or path == "":
-            filepath = os.path.join(FRONTEND_DIR, "index.html")
-        else:
-            rel_path = path.lstrip("/")
-            filepath = os.path.join(FRONTEND_DIR, rel_path)
-
-        if not (os.path.exists(filepath) and os.path.isfile(filepath)):
-            filepath = os.path.join(FRONTEND_DIR, "index.html")
-
-        if os.path.exists(filepath) and os.path.isfile(filepath):
-            content_type = self._get_content_type(filepath)
-            file_size = os.path.getsize(filepath)
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(file_size))
-            self.send_cors_headers()
+        if path == "/auth/dev_login":
+            demo_user = db.upsert_user(
+                "demo_user_1",
+                "golfer@example.com",
+                "Demo Golfer",
+                "https://api.dicebear.com/7.x/bottts/svg?seed=Golfer"
+            )
+            token = auth.create_session_token(demo_user["id"])
+            self.send_response(302)
+            self.send_header("Set-Cookie", f"session_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+            self.send_header("Location", "/")
             self.end_headers()
-        else:
-            self.send_error(404, "File Not Found")
+            return
 
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
+        # 2. Auth API: Current User
+        if path == "/api/me":
+            if user:
+                self.send_json_response({"authenticated": True, "user": user})
+            else:
+                self.send_json_response({"authenticated": False, "user": None, "google_configured": auth.is_google_oauth_configured()})
+            return
 
-        if path == "/api/events":
+        # 3. Courses API
+        if path == "/api/courses":
+            courses = db.list_courses()
+            self.send_json_response(courses)
+            return
+
+        # 4. User's Rounds List API
+        if path == "/api/rounds":
+            if not user_id:
+                self.send_json_response([])
+            else:
+                rounds = db.list_user_rounds(user_id)
+                self.send_json_response(rounds)
+            return
+
+        # 5. Round State API: /api/round/<round_id> or legacy /api/tournament
+        if path.startswith("/api/round/") or path == "/api/tournament":
+            round_id = self.get_requested_round_id(parsed)
+            state = round_manager.get_round_state(round_id, user_id)
+            if not state:
+                self.send_error(404, "Round Not Found")
+                return
+            self.send_json_response(state)
+            return
+
+        # 6. Server-Sent Events (SSE) Stream
+        if path.startswith("/api/events") or path.startswith("/api/round/") and path.endswith("/events"):
+            round_id = self.get_requested_round_id(parsed)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -500,43 +505,30 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_cors_headers()
             self.end_headers()
 
-            initial_state = store.get_state()
-            init_msg = f"event: initial\ndata: {json.dumps(initial_state)}\n\n".encode("utf-8")
+            round_manager.add_subscriber(round_id, self)
             try:
-                self.wfile.write(init_msg)
+                state = round_manager.get_round_state(round_id, user_id)
+                init_payload = f"event: init\ndata: {json.dumps(state)}\n\n".encode("utf-8")
+                self.wfile.write(init_payload)
                 self.wfile.flush()
-            except Exception:
-                return
 
-            store.register_subscriber(self)
-            try:
                 while True:
                     time.sleep(15)
-                    ping_msg = f": heartbeat\n\n".encode("utf-8")
-                    self.wfile.write(ping_msg)
+                    self.wfile.write(b": keepalive\n\n")
                     self.wfile.flush()
-            except Exception:
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
                 pass
             finally:
-                store.remove_subscriber(self)
+                round_manager.remove_subscriber(round_id, self)
             return
 
-        if path == "/api/tournament":
-            state = store.get_state()
-            self.send_json_response(state)
+        # 7. Front-end SPA routing for /round/<round_id>
+        if path.startswith("/round/"):
+            index_path = os.path.join(FRONTEND_DIR, "index.html")
+            self.serve_file(index_path)
             return
 
-        if path == "/api/courses":
-            courses = load_courses_database()
-            self.send_json_response(courses)
-            return
-
-        if path == "/api/export":
-            raw = store.get_raw_data()
-            self.send_json_response(raw)
-            return
-
-        # Serve static frontend files
+        # 8. Static frontend files
         if path == "/" or path == "":
             filepath = os.path.join(FRONTEND_DIR, "index.html")
         else:
@@ -553,8 +545,11 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(404, "File Not Found")
 
     def do_POST(self):
-        parsed = urlparse(self.path)
+        parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        user = self.get_current_user()
+        user_id = user["id"] if user else None
+
         content_len = int(self.headers.get("Content-Length", 0))
         post_body = self.rfile.read(content_len) if content_len > 0 else b"{}"
 
@@ -563,44 +558,119 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             body = {}
 
-        if path == "/api/score":
+        # 1. Auth Logout
+        if path == "/api/logout":
+            self.send_response(200)
+            self.send_header("Set-Cookie", "session_token=; Path=/; HttpOnly; Max-Age=0")
+            self.send_json_response({"authenticated": False})
+            return
+
+        # 2. Create New Round
+        if path == "/api/rounds":
+            course_id = body.get("course_id")
+            new_r = round_manager.create_fresh_round(owner_id=user_id, course_id=course_id)
+            state = round_manager.get_round_state(new_r["id"], user_id)
+            self.send_json_response(state)
+            return
+
+        # 3. Create / Save Custom Course
+        if path == "/api/courses" or (path == "/api/course" and body.get("is_new")):
+            course_name = body.get("course_name") or "Custom Course"
+            holes = body.get("holes") or DEFAULT_HOLES
+            new_c = db.create_course(course_name, holes)
+            courses = db.list_courses()
+            self.send_json_response({
+                "courses": courses,
+                "new_course_id": new_c["id"]
+            })
+            return
+
+        # 4. Resolve round_id for round operations
+        round_id = self.get_requested_round_id(parsed)
+
+        # 5. Round Actions: finish & unlock
+        if path == f"/api/round/{round_id}/finish" or (path == "/api/finish"):
+            state = round_manager.finish_round(round_id, user_id)
+            self.send_json_response(state)
+            return
+
+        if path == f"/api/round/{round_id}/unlock" or (path == "/api/unlock"):
+            result = round_manager.unlock_round(round_id, user_id)
+            if result and "error" in result:
+                self.send_json_response(result, status=403)
+            else:
+                self.send_json_response(result)
+            return
+
+        # 6. Score Entry
+        if path == f"/api/round/{round_id}/score" or path == "/api/score":
             hole_num = int(body.get("hole", 1))
             score_data = body.get("scores")
             team_a = body.get("team_a")
             team_b = body.get("team_b")
-            state = store.set_hole_scores(hole_num, score_data, team_a=team_a, team_b=team_b)
-            self.send_json_response(state)
+            state = round_manager.set_hole_scores(round_id, hole_num, score_data, team_a=team_a, team_b=team_b, user_id=user_id)
+            if state and "error" in state:
+                self.send_json_response(state, status=403)
+            else:
+                self.send_json_response(state)
             return
 
-        if path == "/api/players":
+        # 7. Settings Update
+        if path == f"/api/round/{round_id}/settings" or path == "/api/settings":
+            state = round_manager.update_settings(round_id, body, user_id=user_id)
+            if state and "error" in state:
+                self.send_json_response(state, status=403)
+            else:
+                self.send_json_response(state)
+            return
+
+        # 8. Players Update
+        if path == f"/api/round/{round_id}/players" or path == "/api/players":
             players_list = body.get("players", [])
-            state = store.update_players(players_list)
-            self.send_json_response(state)
+            state = round_manager.update_players(round_id, players_list, user_id=user_id)
+            if state and "error" in state:
+                self.send_json_response(state, status=403)
+            else:
+                self.send_json_response(state)
             return
 
-        if path == "/api/settings":
-            state = store.update_settings(body)
-            self.send_json_response(state)
+        # 9. Course Update for Round
+        if path == f"/api/round/{round_id}/course" or path == "/api/course":
+            state = round_manager.update_course(round_id, body, user_id=user_id)
+            if state and "error" in state:
+                self.send_json_response(state, status=403)
+            else:
+                self.send_json_response(state)
             return
 
-        if path == "/api/courses" or (path == "/api/course" and body.get("is_new")):
-            result = store.create_new_course(body)
-            self.send_json_response(result)
+        # 10. Reset Round Scores
+        if path == f"/api/round/{round_id}/reset" or path == "/api/reset":
+            state = round_manager.reset_round_scores(round_id, user_id=user_id)
+            if state and "error" in state:
+                self.send_json_response(state, status=403)
+            else:
+                self.send_json_response(state)
             return
 
-        if path == "/api/course":
-            state = store.update_course(body)
-            self.send_json_response(state)
-            return
+        self.send_error(404, "Endpoint Not Found")
 
-        if path == "/api/reset":
-            state = store.reset_scores()
-            self.send_json_response(state)
-            return
+    def do_DELETE(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        user = self.get_current_user()
+        user_id = user["id"] if user else None
 
-        if path == "/api/reset_default":
-            state = store.reset_to_default()
-            self.send_json_response(state)
+        round_id = self.get_requested_round_id(parsed)
+        if path == f"/api/round/{round_id}" or path.startswith("/api/round/"):
+            round_data = db.get_round(round_id)
+            if not round_data:
+                self.send_error(404, "Round Not Found")
+                return
+            if round_data.get("owner_id") and user_id != round_data.get("owner_id"):
+                self.send_json_response({"error": "Only the round creator can delete this round"}, status=403)
+                return
+            db.delete_round(round_id)
+            self.send_json_response({"status": "ok", "success": True, "deleted_round_id": round_id})
             return
 
         self.send_error(404, "Endpoint Not Found")
@@ -617,18 +687,31 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _get_content_type(self, filepath: str) -> str:
+        ext = os.path.splitext(filepath)[1].lower()
+        types = {
+            ".html": "text/html; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".svg": "image/svg+xml",
+            ".ico": "image/x-icon"
+        }
+        return types.get(ext, "application/octet-stream")
+
     def serve_file(self, filepath: str):
         content_type = self._get_content_type(filepath)
-
-        with open(filepath, "rb") as f:
-            content = f.read()
-
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(content)))
-        self.send_cors_headers()
-        self.end_headers()
         try:
+            with open(filepath, "rb") as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_cors_headers()
+            self.end_headers()
             self.wfile.write(content)
         except Exception:
             pass
@@ -639,9 +722,6 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
     def handle_error(self, request, client_address):
-        """
-        Suppress harmless client disconnect/abort errors from browser reloads/speculative connections.
-        """
         exc_type, exc_val, exc_tb = sys.exc_info()
         if exc_type and issubclass(exc_type, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError)):
             return
@@ -661,11 +741,4 @@ def run_server(port=PORT):
 
 
 if __name__ == "__main__":
-    env_port = os.environ.get("PORT")
-    if env_port:
-        port = int(env_port)
-    elif len(sys.argv) > 1:
-        port = int(sys.argv[1])
-    else:
-        port = PORT
-    run_server(port)
+    run_server(PORT)

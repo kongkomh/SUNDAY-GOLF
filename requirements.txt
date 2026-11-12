@@ -1,1 +1,2 @@
-# Standard Python 3 library only (no external pip dependencies needed)
+# Sunday Golf Tracker dependencies
+psycopg2-binary>=2.9.9

@@ -165,36 +165,45 @@ def get_all_players_handicap_map(players: List[Dict[str, Any]], holes: List[Dict
     return res
 
 
-def compute_wolf_turbo_holes(players: List[Dict[str, Any]], holes: List[Dict[str, Any]]) -> List[int]:
+def get_played_hole_order(starting_hole: int = 1) -> List[int]:
+    """Returns the sequence of 18 holes based on starting hole (1 or 10)."""
+    if int(starting_hole) == 10:
+        return [10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    return list(range(1, 19))
+
+
+def compute_wolf_turbo_holes(players: List[Dict[str, Any]], holes: List[Dict[str, Any]], starting_hole: int = 1) -> List[int]:
     """
     In Wolf mode:
-    - Hole 9 and Hole 18 are always turbo holes.
-    - Assign remaining wolves their turbo holes (non-par 3):
-      - Front 9 turbo hole assigned to wolf closest to Hole 9 (non-par 3).
-      - Back 9 turbo hole assigned to wolf closest to Hole 18 (non-par 3).
+    Ensure exactly 1 turbo hole for each wolf across the played sequence.
+    Prefers non-Par 3 holes in the later portion of their wolf rotation.
     """
-    turbo_holes = [9, 18]
-    n_players = len(players)
-    if n_players <= 2:
-        return turbo_holes
+    n = len(players)
+    if n == 0:
+        return [9, 18]
 
-    # Find non-Par 3 holes in front 9 closest to 9 (descending from 8 down to 1)
-    f9_candidates = [h["hole"] for h in holes if 1 <= h["hole"] <= 8 and h.get("par", 4) != 3]
-    f9_candidates.sort(key=lambda h: abs(h - 9))
+    played_seq = get_played_hole_order(starting_hole)
+    hole_par_map = {int(h.get("hole", i + 1)): int(h.get("par", 4)) for i, h in enumerate(holes)}
 
-    # Find non-Par 3 holes in back 9 closest to 18 (descending from 17 down to 10)
-    b9_candidates = [h["hole"] for h in holes if 10 <= h["hole"] <= 17 and h.get("par", 4) != 3]
-    b9_candidates.sort(key=lambda h: abs(h - 18))
+    turbo_holes = []
+    for p_idx in range(n):
+        # All holes in played sequence where player p_idx is the wolf
+        wolf_holes = [h for pos, h in enumerate(played_seq) if (pos % n) == p_idx]
+        if not wolf_holes:
+            continue
 
-    if f9_candidates:
-        turbo_holes.append(f9_candidates[0])
-    if b9_candidates:
-        turbo_holes.append(b9_candidates[0])
+        # Prefer non-Par 3 holes
+        non_par3 = [h for h in wolf_holes if hole_par_map.get(h, 4) != 3]
+        candidates = non_par3 if non_par3 else wolf_holes
+
+        # Pick the candidate latest in the played round for this wolf
+        chosen = max(candidates, key=lambda h: played_seq.index(h))
+        turbo_holes.append(chosen)
 
     return sorted(list(set(turbo_holes)))
 
 
-def get_wolf_rotation_for_hole(hole_num: int, players: List[Dict[str, Any]]) -> Dict[str, Any]:
+def get_wolf_rotation_for_hole(hole_num: int, players: List[Dict[str, Any]], starting_hole: int = 1) -> Dict[str, Any]:
     """
     For a given hole (1-18), determines:
     - wolf_player: Player object who is the wolf
@@ -206,7 +215,13 @@ def get_wolf_rotation_for_hole(hole_num: int, players: List[Dict[str, Any]]) -> 
     if n == 0:
         return {"wolf": None, "tee_order": [], "default_team_a": [], "default_team_b": []}
 
-    wolf_idx = (hole_num - 1) % n
+    played_seq = get_played_hole_order(starting_hole)
+    try:
+        hole_pos = played_seq.index(int(hole_num))
+    except ValueError:
+        hole_pos = int(hole_num) - 1
+
+    wolf_idx = hole_pos % n
     wolf = players[wolf_idx]
 
     # Tee off order: the player after the wolf tees off 1st, then 2nd... up to Wolf who tees off last
@@ -652,9 +667,16 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
     if len(holes) < 18:
         holes = copy.deepcopy(DEFAULT_HOLES)
 
+    # Starting hole (1 or 10)
+    starting_hole = int(data.get("starting_hole") or (data.get("game_settings") or {}).get("starting_hole") or 1)
+    if starting_hole not in (1, 10):
+        starting_hole = 1
+    settings["starting_hole"] = starting_hole
+    played_seq = get_played_hole_order(starting_hole)
+
     # In WOLF mode with turbo enabled, adjust turbo flags if needed
     if settings.get("game_mode") == "WOLF" and settings.get("turbo"):
-        wolf_turbos = compute_wolf_turbo_holes(players, holes)
+        wolf_turbos = compute_wolf_turbo_holes(players, holes, starting_hole)
         for h in holes:
             h["is_turbo"] = (h["hole"] in wolf_turbos)
 
@@ -685,14 +707,18 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
 
     max_thru = 0
 
-    for h_spec in holes:
+    # Process holes in chronological played sequence
+    hole_dict = {int(h.get("hole", i + 1)): h for i, h in enumerate(holes)}
+    ordered_holes = [hole_dict.get(h_num, {"hole": h_num, "par": 4, "handicap": 9, "is_turbo": False}) for h_num in played_seq]
+
+    for h_spec in ordered_holes:
         h_num = int(h_spec["hole"])
         h_key = str(h_num)
         h_par = int(h_spec.get("par", 4))
 
         # Default team assignments for this hole
         if settings.get("game_mode") == "WOLF":
-            wolf_info = get_wolf_rotation_for_hole(h_num, players)
+            wolf_info = get_wolf_rotation_for_hole(h_num, players, starting_hole)
             default_team_a = wolf_info["default_team_a"]
             default_team_b = wolf_info["default_team_b"]
             wolf_player = wolf_info["wolf"]
@@ -898,12 +924,22 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
     out_par = sum(h.get("par", 4) for h in holes if h.get("hole", 1) <= 9)
     in_par = sum(h.get("par", 4) for h in holes if h.get("hole", 1) > 9)
 
-    current_display_hole = min(18, max_thru + 1) if max_thru < 18 else 18
+    # Determine current display hole based on played sequence
+    first_unplayed = next((h for h in played_seq if str(h) not in raw_scores or not raw_scores[str(h)].get("scores")), None)
+    if first_unplayed is not None:
+        current_display_hole = first_unplayed
+    else:
+        current_display_hole = played_seq[-1]
+
+    # Keep calculated_holes sorted by hole number for clean indexing
+    calculated_holes.sort(key=lambda x: x["hole"])
 
     return {
         "tournament_name": tournament_name,
         "course_id": course_id,
         "course_name": course_name,
+        "starting_hole": starting_hole,
+        "played_hole_order": played_seq,
         "game_settings": settings,
         "players": players,
         "default_team_a": cfg_default_team_a,

@@ -16,16 +16,55 @@ let state = {
   momentumChart: null,
   eventSource: null,
   draggedPlayerId: null,
-  isCourseModified: false
+  isCourseModified: false,
+  currentUser: null,
+  roundId: null
 };
 
+function getUrlRoundId() {
+  const params = new URLSearchParams(window.location.search);
+  const qRound = params.get('round');
+  if (qRound) return qRound;
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  if (parts.length >= 2 && parts[0] === 'round') return parts[1];
+  return null;
+}
+
+function getRoundApiUrl(subpath = '') {
+  const rId = state.roundId || (state.tournament ? (state.tournament.round_id || state.tournament.id) : null);
+  if (rId) {
+    return `/api/round/${rId}${subpath}`;
+  }
+  return subpath ? `/api${subpath}` : '/api/tournament';
+}
+
+function getPlayedHoleOrder() {
+  if (state.tournament?.played_hole_order && Array.isArray(state.tournament.played_hole_order)) {
+    return state.tournament.played_hole_order;
+  }
+  const startingHole = state.tournament?.starting_hole || 1;
+  if (startingHole === 10) {
+    return [10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  }
+  return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+}
+
+function getNextHoleNumber(currentHole) {
+  const playedSeq = getPlayedHoleOrder();
+  const idx = playedSeq.indexOf(currentHole);
+  if (idx >= 0 && idx < playedSeq.length - 1) {
+    return playedSeq[idx + 1];
+  }
+  return null;
+}
+
 const DEFAULT_COLORS = [
-  "#FFFFFF", // P1: White (Shirobon)
-  "#1E293B", // P2: Black (Kurobon)
-  "#EF4444", // P3: Red (Akabon)
-  "#3B82F6", // P4: Blue (Aobon)
-  "#10B981", // P5: Green (Midoribon)
-  "#F59E0B"  // P6: Yellow (Kibon)
+  "#FFFFFF", // P1: White
+  "#1E293B", // P2: Black
+  "#EF4444", // P3: Red
+  "#3B82F6", // P4: Blue
+  "#10B981", // P5: Green
+  "#F59E0B"  // P6: Yellow
 ];
 
 const DEFAULT_NAMES = [
@@ -40,7 +79,7 @@ const DEFAULT_NAMES = [
 // ================= INITIALIZATION =================
 document.addEventListener('DOMContentLoaded', () => {
   initIcons();
-  setupSSE();
+  fetchCurrentUser();
   fetchInitialState();
   fetchCourses();
   setupDragScroll('scorecard-scroll-container');
@@ -108,7 +147,8 @@ function setupSSE() {
     state.eventSource.close();
   }
 
-  state.eventSource = new EventSource('/api/events');
+  const sseUrl = getRoundApiUrl('/events');
+  state.eventSource = new EventSource(sseUrl);
 
   state.eventSource.onopen = () => {
     if (liveIndicator) {
@@ -133,24 +173,48 @@ function setupSSE() {
     }
   };
 
+  state.eventSource.addEventListener('init', handleUpdate);
   state.eventSource.addEventListener('initial', handleUpdate);
   state.eventSource.addEventListener('score_update', handleUpdate);
   state.eventSource.addEventListener('players_update', handleUpdate);
   state.eventSource.addEventListener('settings_update', handleUpdate);
   state.eventSource.addEventListener('course_update', handleUpdate);
+  state.eventSource.addEventListener('round_finished', handleUpdate);
+  state.eventSource.addEventListener('round_unlocked', handleUpdate);
   state.eventSource.addEventListener('reset', handleUpdate);
   state.eventSource.addEventListener('reset_default', handleUpdate);
 }
 
 async function fetchInitialState() {
   try {
-    const res = await fetch('/api/tournament');
+    const urlRoundId = getUrlRoundId();
+    const endpoint = urlRoundId ? `/api/round/${urlRoundId}` : '/api/tournament';
+    const res = await fetch(endpoint);
     if (res.ok) {
       const data = await res.json();
+      state.roundId = data.round_id || data.id;
+      if (state.roundId && !window.location.search.includes(`round=${state.roundId}`)) {
+        window.history.replaceState(null, '', `/?round=${state.roundId}`);
+      }
+      state.currentHole = data.current_display_hole || data.starting_hole || 1;
       updateTournamentState(data);
+      setupSSE();
     }
   } catch (err) {
     console.error("Failed to fetch initial state:", err);
+  }
+}
+
+async function fetchCurrentUser() {
+  try {
+    const res = await fetch('/api/me');
+    if (res.ok) {
+      const data = await res.json();
+      state.currentUser = data.authenticated ? data.user : null;
+      renderAuth();
+    }
+  } catch (err) {
+    console.error("Failed to fetch user:", err);
   }
 }
 
@@ -289,7 +353,7 @@ function renderHeader() {
   const nameEl = document.getElementById('header-tournament-name');
   if (nameEl) {
     nameEl.innerHTML = `
-      <span class="truncate">${t.tournament_name || 'Sunday Golf Match'}</span>
+      <span class="truncate">${t.round_name || t.tournament_name || 'Sunday Golf Match'}</span>
       <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black ${modeBadgeClass}">
         ${modeBadgeText}
       </span>
@@ -300,6 +364,52 @@ function renderHeader() {
   if (courseEl) {
     courseEl.textContent = t.course_name || 'Krungthep Kreetha';
   }
+
+  // Round State Action Button (Finish / Unlock)
+  const actionWrap = document.getElementById('round-state-action-wrap');
+  if (actionWrap) {
+    if (t.is_finished) {
+      actionWrap.innerHTML = `
+        <span class="px-2 py-0.5 rounded text-[10px] font-black bg-slate-800 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+          <i data-lucide="lock" class="w-3 h-3"></i>
+          <span>LOCKED</span>
+        </span>
+        ${t.is_owner ? `
+          <button type="button" onclick="unlockCurrentRound()" class="py-1 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] transition shadow flex items-center gap-1">
+            <i data-lucide="unlock" class="w-3 h-3"></i>
+            <span>Unlock Round</span>
+          </button>
+        ` : ''}
+      `;
+    } else {
+      actionWrap.innerHTML = `
+        <button type="button" onclick="finishCurrentRound()" class="py-1 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-black text-[11px] transition flex items-center gap-1 shadow-sm">
+          <i data-lucide="flag" class="w-3 h-3"></i>
+          <span>Finish Round</span>
+        </button>
+      `;
+    }
+  }
+
+  // Round Finished Global Banner
+  const finBanner = document.getElementById('round-finished-banner');
+  const unlockContainer = document.getElementById('banner-unlock-btn-container');
+  if (finBanner) {
+    if (t.is_finished) {
+      finBanner.classList.remove('hidden');
+      if (unlockContainer) {
+        unlockContainer.innerHTML = t.is_owner ? `
+          <button type="button" onclick="unlockCurrentRound()" class="ml-2 px-2.5 py-0.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition">
+            Unlock & Edit
+          </button>
+        ` : '';
+      }
+    } else {
+      finBanner.classList.add('hidden');
+    }
+  }
+
+  renderAuth();
 
   // Live Leader Pill (2-line)
   const leaderContainer = document.getElementById('header-leader-content');
@@ -414,7 +524,10 @@ function renderHoleCarousel(holes, calcHoles) {
   const container = document.getElementById('hole-carousel');
   if (!container) return;
 
-  container.innerHTML = holes.map(h => {
+  const playedSeq = getPlayedHoleOrder();
+  const orderedHoles = playedSeq.map(hNum => holes.find(h => h.hole === hNum) || { hole: hNum, par: 4, is_turbo: false });
+
+  container.innerHTML = orderedHoles.map(h => {
     const hNum = h.hole;
     const isActive = (hNum === state.currentHole);
     const calcH = calcHoles.find(c => c.hole === hNum);
@@ -856,8 +969,9 @@ function renderFFAMatchupsTable(currCalc, players, cashPerPoint, curr, comboCoun
 }
 
 function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
-  const disabledAttr = isLocked ? 'disabled' : '';
-  const lockedOpacity = isLocked ? 'opacity-70' : '';
+  const isRoundFinished = Boolean(state.tournament?.is_finished);
+  const disabledAttr = (isLocked || isRoundFinished) ? 'disabled' : '';
+  const lockedOpacity = (isLocked || isRoundFinished) ? 'opacity-70' : '';
   const ptsDelta = currCalc?.match?.point_deltas?.[p.id];
   const curr = state.tournament?.game_settings?.currency || 'THB';
   const cashDelta = (ptsDelta !== undefined) ? ptsDelta * (state.tournament?.game_settings?.cash_per_point || 100) : null;
@@ -955,18 +1069,18 @@ function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
           ${p.hasHcp ? `<span class="block text-[9px] text-sky-400 font-extrabold leading-none">Net ${p.net}</span>` : ''}
         </div>
 
-        <!-- Vertical Stepper Controls -->
-        <div class="vertical-score-dial flex items-center gap-1.5">
-          <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', -1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none">
-            −
+        <!-- Vertical Stepper Controls: + on top, - on bottom -->
+        <div class="vertical-score-dial flex flex-col items-center gap-1">
+          <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', 1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none" title="Increase score">
+            +
           </button>
           
           <div class="w-10 h-8 rounded-lg bg-slate-950 border-2 border-amber-500/80 flex items-center justify-center text-sm font-black text-white font-mono shadow-inner">
             ${p.score}
           </div>
 
-          <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', 1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none">
-            +
+          <button type="button" ${disabledAttr} onclick="stepScore('${p.id}', -1)" class="dial-btn w-8 h-8 rounded-lg bg-slate-950 border border-slate-700 text-white font-black text-base flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none" title="Decrease score">
+            −
           </button>
         </div>
       </div>
@@ -979,6 +1093,26 @@ function renderScoringActionBar(hNum, currCalc) {
   const container = document.getElementById('scoring-action-container');
   if (!container) return;
 
+  const isRoundFinished = Boolean(state.tournament?.is_finished);
+  const nextHole = getNextHoleNumber(hNum);
+
+  if (isRoundFinished) {
+    container.innerHTML = `
+      <div class="flex-1 py-3 px-4 rounded-2xl bg-slate-900 border border-slate-800 text-center text-slate-400 font-bold text-xs flex items-center justify-center gap-2 shadow-inner">
+        <i data-lucide="lock" class="w-4 h-4 text-amber-400"></i>
+        <span>This round is finished and locked (Read-Only)</span>
+      </div>
+      ${nextHole ? `
+        <button type="button" onclick="selectHole(${nextHole})" class="py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
+          <span>Hole ${nextHole}</span>
+          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </button>
+      ` : ''}
+    `;
+    initIcons();
+    return;
+  }
+
   const existingScores = currCalc?.scores || {};
   const isHolePlayed = existingScores && Object.keys(existingScores).length > 0;
   const isUnlocked = Boolean(state.unlockedHoles[`${hNum}`]);
@@ -990,9 +1124,9 @@ function renderScoringActionBar(hNum, currCalc) {
         <i data-lucide="unlock" class="w-4 h-4 text-amber-400"></i>
         <span>Unlock & Edit Hole ${hNum}</span>
       </button>
-      ${hNum < 18 ? `
-        <button type="button" onclick="selectHole(${hNum + 1})" class="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20">
-          <span>Next Hole (${hNum + 1})</span>
+      ${nextHole ? `
+        <button type="button" onclick="selectHole(${nextHole})" class="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20">
+          <span>Next Hole (${nextHole})</span>
           <i data-lucide="arrow-right" class="w-4 h-4"></i>
         </button>
       ` : ''}
@@ -1009,9 +1143,9 @@ function renderScoringActionBar(hNum, currCalc) {
         <span>Save</span>
       </button>
 
-      ${hNum < 18 ? `
-        <button type="button" onclick="selectHole(${hNum + 1})" class="py-3.5 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs sm:text-sm border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
-          <span>Next Hole</span>
+      ${nextHole ? `
+        <button type="button" onclick="selectHole(${nextHole})" class="py-3.5 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs sm:text-sm border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
+          <span>Next Hole (${nextHole})</span>
           <i data-lucide="arrow-right" class="w-4 h-4"></i>
         </button>
       ` : ''}
@@ -1100,7 +1234,7 @@ async function saveHoleScores(hNum) {
   });
 
   try {
-    const res = await fetch('/api/score', {
+    const res = await fetch(getRoundApiUrl('/score'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1116,6 +1250,8 @@ async function saveHoleScores(hNum) {
       state.localScores = {};
       delete state.unlockedHoles[`${hNum}`];
       updateTournamentState(data);
+    } else if (res.status === 403) {
+      showToast("Round is locked. No edits allowed.");
     }
   } catch (err) {
     console.error("Error saving score:", err);
@@ -1124,7 +1260,7 @@ async function saveHoleScores(hNum) {
 
 async function clearHoleScores(hNum) {
   try {
-    const res = await fetch('/api/score', {
+    const res = await fetch(getRoundApiUrl('/score'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1138,6 +1274,8 @@ async function clearHoleScores(hNum) {
       state.localScores = {};
       delete state.unlockedHoles[`${hNum}`];
       updateTournamentState(data);
+    } else if (res.status === 403) {
+      showToast("Round is locked. No edits allowed.");
     }
   } catch (err) {
     console.error("Error clearing score:", err);
@@ -1152,20 +1290,37 @@ function renderScorecardTable() {
   const holes = state.tournament.holes || [];
   const players = state.tournament.players || [];
   const scorecards = state.tournament.player_scorecards || [];
+  const calcHoles = state.tournament.calculated_holes || [];
+  const isWolf = (state.tournament.game_settings?.game_mode === 'WOLF');
+  const isStarting10 = (state.tournament.starting_hole === 10);
 
-  const outPar = holes.slice(0, 9).reduce((a, b) => a + (b.par || 4), 0);
-  const inPar = holes.slice(9, 18).reduce((a, b) => a + (b.par || 4), 0);
-  const totPar = outPar + inPar;
+  const group1Holes = isStarting10 ? holes.slice(9, 18) : holes.slice(0, 9);
+  const group1Title = isStarting10 ? 'IN' : 'OUT';
+  const group1Par = group1Holes.reduce((a, b) => a + (b.par || 4), 0);
+
+  const group2Holes = isStarting10 ? holes.slice(0, 9) : holes.slice(9, 18);
+  const group2Title = isStarting10 ? 'OUT' : 'IN';
+  const group2Par = group2Holes.reduce((a, b) => a + (b.par || 4), 0);
+
+  const totPar = group1Par + group2Par;
 
   let html = `
     <thead>
       <!-- Header Row -->
       <tr class="bg-slate-950 text-slate-400 font-black text-[10px] uppercase">
         <th class="py-2.5 px-3 text-left min-w-[130px] sticky left-0 z-20 bg-slate-950">Player</th>
-        ${holes.slice(0, 9).map(h => `<th class="w-8">${h.is_turbo ? '🔥' : ''}H${h.hole}</th>`).join('')}
-        <th class="w-10 bg-slate-900 text-amber-400 font-black">OUT</th>
-        ${holes.slice(9, 18).map(h => `<th class="w-8">${h.is_turbo ? '🔥' : ''}H${h.hole}</th>`).join('')}
-        <th class="w-10 bg-slate-900 text-amber-400 font-black">IN</th>
+        ${group1Holes.map(h => {
+          const wolfP = isWolf ? calcHoles.find(c => c.hole === h.hole)?.wolf_player : null;
+          const wolfBadge = wolfP ? `<span class="block text-[8px] text-purple-400 -mt-0.5" title="Wolf: ${wolfP.name}">🐺</span>` : '';
+          return `<th class="w-8">${h.is_turbo ? '🔥' : ''}H${h.hole}${wolfBadge}</th>`;
+        }).join('')}
+        <th class="w-10 bg-slate-900 text-amber-400 font-black">${group1Title}</th>
+        ${group2Holes.map(h => {
+          const wolfP = isWolf ? calcHoles.find(c => c.hole === h.hole)?.wolf_player : null;
+          const wolfBadge = wolfP ? `<span class="block text-[8px] text-purple-400 -mt-0.5" title="Wolf: ${wolfP.name}">🐺</span>` : '';
+          return `<th class="w-8">${h.is_turbo ? '🔥' : ''}H${h.hole}${wolfBadge}</th>`;
+        }).join('')}
+        <th class="w-10 bg-slate-900 text-amber-400 font-black">${group2Title}</th>
         <th class="w-11 bg-slate-900 text-white font-black">TOT</th>
         <th class="w-10 bg-slate-900 text-amber-300 font-black">+/-</th>
       </tr>
@@ -1173,10 +1328,10 @@ function renderScorecardTable() {
       <!-- Par Row -->
       <tr class="bg-slate-900 text-slate-300 font-extrabold text-[10px] border-t border-slate-800">
         <td class="text-left px-3 font-bold sticky left-0 z-20 bg-slate-900 text-slate-300">PAR</td>
-        ${holes.slice(0, 9).map(h => `<td>${h.par || 4}</td>`).join('')}
-        <td class="font-black text-amber-400 bg-slate-950">${outPar}</td>
-        ${holes.slice(9, 18).map(h => `<td>${h.par || 4}</td>`).join('')}
-        <td class="font-black text-amber-400 bg-slate-950">${inPar}</td>
+        ${group1Holes.map(h => `<td>${h.par || 4}</td>`).join('')}
+        <td class="font-black text-amber-400 bg-slate-950">${group1Par}</td>
+        ${group2Holes.map(h => `<td>${h.par || 4}</td>`).join('')}
+        <td class="font-black text-amber-400 bg-slate-950">${group2Par}</td>
         <td class="font-black text-white bg-slate-950">${totPar}</td>
         <td class="font-black text-amber-400 bg-slate-950">E</td>
       </tr>
@@ -1184,9 +1339,9 @@ function renderScorecardTable() {
       <!-- Handicap Row -->
       <tr class="bg-slate-900/70 text-slate-400 font-bold text-[10px] border-b border-slate-800">
         <td class="text-left px-3 font-bold sticky left-0 z-20 bg-slate-900 text-slate-400">HCP</td>
-        ${holes.slice(0, 9).map(h => `<td class="text-slate-400 font-mono">${h.handicap ?? '-'}</td>`).join('')}
+        ${group1Holes.map(h => `<td class="text-slate-400 font-mono">${h.handicap ?? '-'}</td>`).join('')}
         <td class="font-bold text-slate-600 bg-slate-950">-</td>
-        ${holes.slice(9, 18).map(h => `<td class="text-slate-400 font-mono">${h.handicap ?? '-'}</td>`).join('')}
+        ${group2Holes.map(h => `<td class="text-slate-400 font-mono">${h.handicap ?? '-'}</td>`).join('')}
         <td class="font-bold text-slate-600 bg-slate-950">-</td>
         <td class="font-bold text-slate-600 bg-slate-950">-</td>
         <td class="font-bold text-slate-600 bg-slate-950">-</td>
@@ -1207,27 +1362,33 @@ function renderScorecardTable() {
         </td>
     `;
 
-    // Front 9 (H1 to H9)
-    for (let h = 1; h <= 9; h++) {
-      const score = p.scores ? p.scores[str(h)] : null;
-      const par = (holes[h - 1] || {}).par || 4;
-      const hasHcp = p.handicap_holes && p.handicap_holes.includes(h);
-      html += `<td>${renderGolfBadge(score, par, hasHcp)}</td>`;
-    }
+    // Group 1 (First 9 played)
+    group1Holes.forEach(h => {
+      const hNum = h.hole;
+      const score = p.scores ? p.scores[str(hNum)] : null;
+      const par = h.par || 4;
+      const hasHcp = Boolean(p.handicap_holes && p.handicap_holes.includes(hNum));
+      const wolfId = isWolf ? calcHoles.find(c => c.hole === hNum)?.wolf_player?.id : null;
+      const isWolfPlayer = Boolean(isWolf && wolfId === p.id);
+      html += `<td>${renderGolfBadge(score, par, hasHcp, isWolfPlayer)}</td>`;
+    });
 
-    // OUT Total
-    html += `<td class="font-black bg-slate-900/80 text-slate-200">${p.out_gross || '-'}</td>`;
+    const g1Gross = isStarting10 ? (p.in_gross || '-') : (p.out_gross || '-');
+    html += `<td class="font-black bg-slate-900/80 text-slate-200">${g1Gross}</td>`;
 
-    // Back 9 (H10 to H18)
-    for (let h = 10; h <= 18; h++) {
-      const score = p.scores ? p.scores[str(h)] : null;
-      const par = (holes[h - 1] || {}).par || 4;
-      const hasHcp = p.handicap_holes && p.handicap_holes.includes(h);
-      html += `<td>${renderGolfBadge(score, par, hasHcp)}</td>`;
-    }
+    // Group 2 (Second 9 played)
+    group2Holes.forEach(h => {
+      const hNum = h.hole;
+      const score = p.scores ? p.scores[str(hNum)] : null;
+      const par = h.par || 4;
+      const hasHcp = Boolean(p.handicap_holes && p.handicap_holes.includes(hNum));
+      const wolfId = isWolf ? calcHoles.find(c => c.hole === hNum)?.wolf_player?.id : null;
+      const isWolfPlayer = Boolean(isWolf && wolfId === p.id);
+      html += `<td>${renderGolfBadge(score, par, hasHcp, isWolfPlayer)}</td>`;
+    });
 
-    // IN Total
-    html += `<td class="font-black bg-slate-900/80 text-slate-200">${p.in_gross || '-'}</td>`;
+    const g2Gross = isStarting10 ? (p.out_gross || '-') : (p.in_gross || '-');
+    html += `<td class="font-black bg-slate-900/80 text-slate-200">${g2Gross}</td>`;
 
     // TOT Gross
     html += `<td class="font-black bg-slate-900 text-white">${p.total_gross || '-'}</td>`;
@@ -1249,16 +1410,23 @@ function renderScorecardTable() {
   table.innerHTML = html;
 }
 
-function renderGolfBadge(score, par, hasHcp) {
-  if (score === null || score === undefined) return '<span class="text-slate-600">-</span>';
+function renderGolfBadge(score, par, hasHcp, isWolf) {
+  const hcpIcon = hasHcp ? `<span class="text-[8px] text-sky-400 font-black" title="Handicap Stroke (TOR)">🪽</span>` : '';
+  const wolfIcon = isWolf ? `<span class="text-[9px]" title="Wolf Player">🐺</span>` : '';
+  const indicators = (hcpIcon || wolfIcon) ? `<div class="flex items-center justify-center gap-0.5 leading-none mt-0.5">${wolfIcon}${hcpIcon}</div>` : '';
+
+  if (score === null || score === undefined) {
+    return `<div class="flex flex-col items-center justify-center py-0.5"><span class="text-slate-600 font-mono">-</span>${indicators}</div>`;
+  }
   const diff = score - par;
-  const hcpDot = hasHcp ? `<span class="text-[8px] text-sky-400 block -mt-1 font-black">🪽</span>` : '';
-  
-  if (diff <= -2) return `<span class="golf-badge golf-eagle">${score}</span>${hcpDot}`;
-  if (diff === -1) return `<span class="golf-badge golf-birdie">${score}</span>${hcpDot}`;
-  if (diff === 0) return `<span class="golf-badge golf-par">${score}</span>${hcpDot}`;
-  if (diff === 1) return `<span class="golf-badge golf-bogey">${score}</span>${hcpDot}`;
-  return `<span class="golf-badge golf-double-bogey">${score}</span>${hcpDot}`;
+  let badgeClass = "golf-par";
+  if (diff <= -2) badgeClass = "golf-eagle";
+  else if (diff === -1) badgeClass = "golf-birdie";
+  else if (diff === 0) badgeClass = "golf-par";
+  else if (diff === 1) badgeClass = "golf-bogey";
+  else badgeClass = "golf-double-bogey";
+
+  return `<div class="flex flex-col items-center justify-center py-0.5"><span class="golf-badge ${badgeClass}">${score}</span>${indicators}</div>`;
 }
 
 // ================= TAB 3: MOMENTUM CHART =================
@@ -1307,7 +1475,8 @@ function renderMomentumChart() {
     `;
   }
 
-  const labels = ['Tee', ...Array.from({ length: 18 }, (_, i) => `H${i + 1}`)];
+  const playedSeq = getPlayedHoleOrder();
+  const labels = ['Tee', ...playedSeq.map(h => `H${h}`)];
 
   const datasets = scorecards.map(p => {
     return {
@@ -1479,6 +1648,10 @@ function renderSettingsForms() {
 
   // Game Mode Buttons
   setGameModeUI(settings.game_mode || 'TEAMS');
+
+  // Starting Hole (1 or 10)
+  const startingHole = settings.starting_hole || t.starting_hole || 1;
+  setStartingHoleUI(startingHole);
 
   // Hand count, Cash, Currency
   const handInp = document.getElementById('cfg-hand-count');
@@ -1811,7 +1984,7 @@ async function savePlayersLineup() {
   }
 
   try {
-    const res = await fetch('/api/players', {
+    const res = await fetch(getRoundApiUrl('/players'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ players: playersPayload })
@@ -1820,10 +1993,16 @@ async function savePlayersLineup() {
     if (res.ok) {
       const data = await res.json();
       updateTournamentState(data);
-      alert("Players lineup saved successfully!");
+      showToast("Players lineup saved successfully!");
+    } else if (res.status === 403) {
+      showToast("Cannot edit: Round is finished and locked.", "lock");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to save players.", "error");
     }
   } catch (err) {
     console.error("Error saving players:", err);
+    showToast("Network error saving players.", "error");
   }
 }
 
@@ -1834,6 +2013,9 @@ async function saveGameSettings() {
   let gameMode = 'TEAMS';
   if (isWolf) gameMode = 'WOLF';
   else if (isFFA) gameMode = 'FREE_FOR_ALL';
+
+  const isStart10 = document.getElementById('btn-start-hole-10')?.classList.contains('bg-amber-500');
+  const startingHole = isStart10 ? 10 : 1;
 
   const handCount = parseInt(document.getElementById('cfg-hand-count')?.value) || 2;
   const cashPerPoint = parseInt(document.getElementById('cfg-cash-per-point')?.value) || 100;
@@ -1854,8 +2036,10 @@ async function saveGameSettings() {
 
   const payload = {
     tournament_name: title,
+    starting_hole: startingHole,
     game_settings: {
       game_mode: gameMode,
+      starting_hole: startingHole,
       hand_count: handCount,
       cash_per_point: cashPerPoint,
       currency: currency,
@@ -1872,7 +2056,7 @@ async function saveGameSettings() {
   };
 
   try {
-    const res = await fetch('/api/settings', {
+    const res = await fetch(getRoundApiUrl('/settings'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1880,11 +2064,20 @@ async function saveGameSettings() {
 
     if (res.ok) {
       const data = await res.json();
+      if (data.starting_hole && (!state.tournament || !state.tournament.total_holes_played || state.tournament.total_holes_played === 0)) {
+        state.currentHole = data.current_display_hole || data.starting_hole;
+      }
       updateTournamentState(data);
-      alert("Game settings saved successfully!");
+      showToast("Game settings saved successfully!");
+    } else if (res.status === 403) {
+      showToast("Cannot edit: Round is finished and locked.", "lock");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to save settings.", "error");
     }
   } catch (err) {
     console.error("Error saving settings:", err);
+    showToast("Network error saving settings.", "error");
   }
 }
 
@@ -2074,7 +2267,8 @@ async function saveNewCourse() {
       body: JSON.stringify({
         course_name: courseName,
         holes: holesPayload,
-        is_new: true
+        is_new: true,
+        round_id: state.roundId
       })
     });
 
@@ -2092,10 +2286,16 @@ async function saveNewCourse() {
         updateTournamentState(data.state);
       }
       renderCourseSelector();
-      alert(`New course "${courseName}" saved successfully!`);
+      showToast(`New course "${courseName}" saved!`);
+    } else if (res.status === 403) {
+      showToast("Cannot edit: Round is finished and locked.", "lock");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to save course.", "error");
     }
   } catch (err) {
     console.error("Error saving new course:", err);
+    showToast("Network error saving new course.", "error");
   }
 }
 
@@ -2125,7 +2325,7 @@ async function saveCourseSpecs() {
   }
 
   try {
-    const res = await fetch('/api/course', {
+    const res = await fetch(getRoundApiUrl('/course'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2144,10 +2344,16 @@ async function saveCourseSpecs() {
       }
       updateTournamentState(data);
       await fetchCourses();
-      alert("Course specifications saved successfully!");
+      showToast("Course specifications saved successfully!");
+    } else if (res.status === 403) {
+      showToast("Cannot edit: Round is finished and locked.", "lock");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to save course specs.", "error");
     }
   } catch (err) {
     console.error("Error saving course specs:", err);
+    showToast("Network error saving course specs.", "error");
   }
 }
 
@@ -2203,10 +2409,10 @@ function confirmEditHole() {
 }
 
 async function resetAllScores() {
-  if (!confirm("Are you sure you want to clear ALL scores across all 18 holes and restart from Hole 1?")) return;
+  if (!confirm("Are you sure you want to clear ALL scores across all 18 holes?")) return;
 
   try {
-    const res = await fetch('/api/reset', {
+    const res = await fetch(getRoundApiUrl('/reset'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
@@ -2217,10 +2423,14 @@ async function resetAllScores() {
       state.localScores = {};
       state.unlockedHoles = {};
       updateTournamentState(data);
-      selectHole(1);
+      selectHole(data.starting_hole || 1);
+      showToast("All scores cleared!");
+    } else if (res.status === 403) {
+      showToast("Cannot reset: Round is finished and locked.", "lock");
     }
   } catch (err) {
     console.error("Error resetting scores:", err);
+    showToast("Network error resetting scores.", "error");
   }
 }
 
@@ -2228,7 +2438,7 @@ async function restoreDefaultData() {
   if (!confirm("Restore default Sunday Golf Match setup with 4 players and reset all scores?")) return;
 
   try {
-    const res = await fetch('/api/reset_default', {
+    const res = await fetch(getRoundApiUrl('/reset_default'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
@@ -2239,11 +2449,14 @@ async function restoreDefaultData() {
       state.localScores = {};
       state.unlockedHoles = {};
       updateTournamentState(data);
-      selectHole(1);
-      alert("Default game setup restored successfully!");
+      selectHole(data.starting_hole || 1);
+      showToast("Default game setup restored!");
+    } else if (res.status === 403) {
+      showToast("Cannot restore: Round is finished and locked.", "lock");
     }
   } catch (err) {
     console.error("Error restoring defaults:", err);
+    showToast("Network error restoring defaults.", "error");
   }
 }
 
@@ -2291,4 +2504,319 @@ function switchTab(tabId) {
 
 function str(v) {
   return String(v);
+}
+
+// ================= STARTING HOLE TOGGLE =================
+function setStartingHole(holeNum) {
+  setStartingHoleUI(holeNum);
+  if (state.tournament) {
+    state.tournament.starting_hole = holeNum;
+    if (state.tournament.game_settings) {
+      state.tournament.game_settings.starting_hole = holeNum;
+    }
+  }
+}
+
+function setStartingHoleUI(holeNum) {
+  const btn1 = document.getElementById('btn-start-hole-1');
+  const btn10 = document.getElementById('btn-start-hole-10');
+  if (!btn1 || !btn10) return;
+  if (holeNum === 10) {
+    btn10.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition bg-amber-500 text-slate-950 shadow-md";
+    btn1.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition text-slate-400 hover:text-white";
+  } else {
+    btn1.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition bg-amber-500 text-slate-950 shadow-md";
+    btn10.className = "flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition text-slate-400 hover:text-white";
+  }
+}
+
+// ================= NOTIFICATIONS & TOASTS =================
+let toastTimer = null;
+function showToast(msg, type = 'info') {
+  const toast = document.getElementById('global-toast');
+  const toastMsg = document.getElementById('global-toast-msg');
+  const toastIcon = document.getElementById('global-toast-icon');
+  if (!toast || !toastMsg) return;
+
+  toastMsg.textContent = msg;
+  if (toastIcon) {
+    toastIcon.textContent = type === 'error' ? '⚠️' : (type === 'lock' ? '🔒' : '⛳');
+  }
+
+  toast.classList.remove('opacity-0', 'translate-y-3', 'pointer-events-none');
+  toast.classList.add('opacity-100', 'translate-y-0');
+
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.classList.remove('opacity-100', 'translate-y-0');
+    toast.classList.add('opacity-0', 'translate-y-3', 'pointer-events-none');
+  }, 3200);
+}
+
+// ================= AUTHENTICATION UI =================
+function renderAuth() {
+  const container = document.getElementById('auth-container');
+  if (!container) return;
+  const user = state.currentUser;
+
+  if (user && user.id) {
+    const avatar = user.picture
+      ? `<img src="${user.picture}" alt="${user.name || user.email}" class="w-6 h-6 rounded-full border border-amber-400 shadow-sm object-cover" />`
+      : `<div class="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black text-[11px] flex items-center justify-center">${(user.name || user.email || 'U')[0].toUpperCase()}</div>`;
+
+    container.innerHTML = `
+      <div class="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 rounded-xl px-2 py-0.5 shadow-sm">
+        ${avatar}
+        <span class="text-xs font-bold text-slate-200 max-w-[85px] truncate hidden sm:inline" title="${user.email}">${user.name || user.email}</span>
+        <button type="button" onclick="logout()" class="text-slate-400 hover:text-rose-400 transition ml-0.5 p-0.5" title="Sign out">
+          <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    `;
+  } else {
+    container.innerHTML = `
+      <a href="/auth/google" class="py-1 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-sm">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"/><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.6h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.9z"/><path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9z"/><path fill="#34A853" d="M12 23.5c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16.5C3.7 20.3 7.5 23.5 12 23.5z"/></svg>
+        <span>Sign in</span>
+      </a>
+    `;
+  }
+  initIcons();
+}
+
+async function logout() {
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+  state.currentUser = null;
+  window.location.reload();
+}
+
+// ================= MULTI-ROUND MANAGEMENT =================
+async function createNewRound() {
+  try {
+    const res = await fetch('/api/rounds', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        course_id: state.tournament?.course_id || 'course-krungthep-kreetha',
+        starting_hole: state.tournament?.starting_hole || 1
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const newRoundId = data.round_id || data.id;
+      const newUrl = `${window.location.origin}/round/${newRoundId}`;
+      window.history.pushState({ roundId: newRoundId }, '', newUrl);
+      state.roundId = newRoundId;
+      state.localScores = {};
+      state.unlockedHoles = {};
+      if (data.tournament) {
+        state.currentHole = data.tournament.current_display_hole || data.tournament.starting_hole || 1;
+        updateTournamentState(data.tournament);
+      } else {
+        await fetchInitialState();
+      }
+      setupSSE();
+      showToast("Fresh round created!");
+      switchTab('play');
+    } else {
+      showToast("Failed to create new round.", "error");
+    }
+  } catch (err) {
+    console.error("Error creating round:", err);
+    showToast("Network error creating round.", "error");
+  }
+}
+
+function finishCurrentRound() {
+  const modal = document.getElementById('finish-round-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeFinishRoundModal() {
+  const modal = document.getElementById('finish-round-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function confirmFinishRound() {
+  closeFinishRoundModal();
+  try {
+    const res = await fetch(getRoundApiUrl('/finish'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      updateTournamentState(data);
+      showToast("Round finished and locked! Scores are read-only.", "lock");
+    } else {
+      showToast("Failed to lock round.", "error");
+    }
+  } catch (err) {
+    console.error("Error finishing round:", err);
+    showToast("Network error.", "error");
+  }
+}
+
+async function unlockCurrentRound() {
+  if (!confirm("Are you sure you want to unlock this round for editing?")) return;
+  try {
+    const res = await fetch(getRoundApiUrl('/unlock'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      updateTournamentState(data);
+      showToast("Round unlocked! You can now edit scores.");
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Only the round creator can unlock this round.", "error");
+    }
+  } catch (err) {
+    console.error("Error unlocking round:", err);
+    showToast("Network error.", "error");
+  }
+}
+
+function copyRoundLink() {
+  const rId = state.roundId || (state.tournament ? (state.tournament.round_id || state.tournament.id) : null);
+  let shareUrl = window.location.href;
+  if (rId) {
+    shareUrl = `${window.location.origin}/round/${rId}`;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      showToast("Round link copied to clipboard!");
+    }).catch(() => {
+      prompt("Copy this round link:", shareUrl);
+    });
+  } else {
+    prompt("Copy this round link:", shareUrl);
+  }
+}
+
+async function openMyRoundsModal() {
+  const modal = document.getElementById('my-rounds-modal');
+  if (modal) modal.classList.remove('hidden');
+
+  const listEl = document.getElementById('my-rounds-list');
+  if (listEl) {
+    listEl.innerHTML = `
+      <div class="p-8 text-center text-slate-400 text-xs">
+        <div class="inline-block w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-2"></div>
+        <p>Loading rounds...</p>
+      </div>
+    `;
+  }
+
+  try {
+    const res = await fetch('/api/rounds');
+    if (res.ok) {
+      const data = await res.json();
+      renderMyRoundsList(Array.isArray(data) ? data : (data.rounds || []));
+    } else {
+      if (listEl) listEl.innerHTML = `<div class="p-6 text-center text-rose-400 text-xs">Failed to load rounds.</div>`;
+    }
+  } catch (err) {
+    if (listEl) listEl.innerHTML = `<div class="p-6 text-center text-rose-400 text-xs">Network error loading rounds.</div>`;
+  }
+}
+
+function closeMyRoundsModal() {
+  const modal = document.getElementById('my-rounds-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function renderMyRoundsList(rounds) {
+  const listEl = document.getElementById('my-rounds-list');
+  if (!listEl) return;
+
+  if (!rounds || rounds.length === 0) {
+    listEl.innerHTML = `
+      <div class="p-8 text-center text-slate-400 text-xs">
+        <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-600"></i>
+        <p class="font-bold">No saved rounds found.</p>
+        <p class="text-[11px] text-slate-500 mt-1">Start a round and it will appear here!</p>
+      </div>
+    `;
+    initIcons();
+    return;
+  }
+
+  const currentRId = state.roundId || (state.tournament ? (state.tournament.round_id || state.tournament.id) : null);
+
+  listEl.innerHTML = rounds.map(r => {
+    const isCurrent = r.id === currentRId;
+    const isLocked = Boolean(r.is_finished);
+    const dateStr = r.created_at ? r.created_at.substring(0, 10) : '';
+    const creator = r.creator_name || r.creator_email || 'Public';
+
+    return `
+      <div class="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-800/50 transition ${isCurrent ? 'bg-amber-500/10 border-l-4 border-amber-500' : ''}">
+        <div class="flex-1 min-w-0 cursor-pointer" onclick="openSavedRound('${r.id}')">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-black text-white truncate">${r.round_name || 'Sunday Golf Match'}</span>
+            ${isCurrent ? '<span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">Active</span>' : ''}
+            ${isLocked ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-amber-400 border border-amber-500/30">Locked</span>' : ''}
+          </div>
+          <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+            <span>${r.course_name || 'Golf Course'}</span>
+            <span>•</span>
+            <span>${dateStr}</span>
+            <span>•</span>
+            <span class="truncate">By ${creator}</span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button type="button" onclick="openSavedRound('${r.id}')" class="py-1 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs transition border border-slate-700 flex items-center gap-1">
+            <span>Open</span>
+          </button>
+          <button type="button" onclick="deleteSavedRound('${r.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  initIcons();
+}
+
+function openSavedRound(rId) {
+  closeMyRoundsModal();
+  if (rId === state.roundId) return;
+  const newUrl = `${window.location.origin}/round/${rId}`;
+  window.history.pushState({ roundId: rId }, '', newUrl);
+  state.roundId = rId;
+  state.localScores = {};
+  state.unlockedHoles = {};
+  fetchInitialState();
+  showToast("Loaded round!");
+}
+
+async function deleteSavedRound(rId) {
+  if (!confirm("Are you sure you want to permanently delete this round?")) return;
+  try {
+    const res = await fetch(`/api/round/${rId}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      showToast("Round deleted.");
+      if (rId === state.roundId) {
+        window.location.href = '/';
+      } else {
+        openMyRoundsModal();
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Cannot delete round (permission denied).", "error");
+    }
+  } catch (err) {
+    console.error("Error deleting round:", err);
+    showToast("Network error.", "error");
+  }
 }
