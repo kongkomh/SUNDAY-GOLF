@@ -1185,7 +1185,7 @@ function renderPlayerCardHtml(p, currentTeam, isLocked, currCalc, par, isThai) {
   const isWolfMode = (state.tournament?.game_settings?.game_mode === 'WOLF');
   const isTheWolf = isWolfMode && (currCalc?.wolf_player?.id === p.id);
   const wolfBadge = isTheWolf 
-    ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-black bg-purple-900/80 text-purple-200 border border-purple-500/40 shrink-0">🐺 WOLF</span>` 
+    ? `<span class="px-1 py-0.5 rounded text-[10px] font-black bg-purple-900/80 text-purple-200 border border-purple-500/40 shrink-0 inline-flex items-center justify-center leading-none" title="Wolf Player">🐺</span>` 
     : '';
 
   const wingIcon = p.hasHcp 
@@ -2103,11 +2103,12 @@ function renderPlayerLineupCards(players) {
           <input id="p-name-${idx}" type="text" value="${p.name || DEFAULT_NAMES[idx]}"
                  data-player-id="${p.player_id || ''}"
                  oninput="onPlayerNameInput(${idx}, this.value)"
-                 onfocus="onPlayerNameInput(${idx}, this.value)"
+                 onfocus="onPlayerNameFocus(${idx}, this)"
+                 onclick="onPlayerNameFocus(${idx}, this)"
                  autocomplete="off"
-                 placeholder="Type to search player..."
+                 placeholder="Type custom name or select player..."
                  class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs focus:ring-1 focus:ring-amber-500">
-          <div id="p-autocomplete-${idx}" class="hidden absolute left-0 right-0 top-full mt-1 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto divide-y divide-slate-800"></div>
+          <div id="p-autocomplete-${idx}" class="hidden absolute left-0 right-0 top-full mt-1 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-h-56 overflow-y-auto divide-y divide-slate-800"></div>
         </div>
 
         <div class="grid grid-cols-2 gap-2 text-xs">
@@ -2127,13 +2128,46 @@ function renderPlayerLineupCards(players) {
 }
 
 let playerSearchDebounce = null;
+async function onPlayerNameFocus(idx, el) {
+  const val = (el.value || '').trim();
+  if (DEFAULT_NAMES.includes(val) || /^PLAYER\s*\d+$/i.test(val)) {
+    el.value = '';
+    el.dataset.playerId = '';
+  }
+  showPlayerAutocompleteList(idx, el.value.trim());
+}
+
 async function onPlayerNameInput(idx, query) {
+  const nameInp = document.getElementById(`p-name-${idx}`);
+  if (nameInp) {
+    nameInp.dataset.playerId = '';
+  }
+  showPlayerAutocompleteList(idx, (query || '').trim());
+}
+
+async function showPlayerAutocompleteList(idx, q) {
   const dropdown = document.getElementById(`p-autocomplete-${idx}`);
   if (!dropdown) return;
-  const q = (query || '').trim();
+
   if (!q) {
-    dropdown.classList.add('hidden');
-    dropdown.innerHTML = '';
+    try {
+      let res = await fetch('/api/my-players');
+      let players = [];
+      let headerTitle = "My Added Players";
+      if (res.ok) {
+        players = await res.json();
+      }
+      if (!players || players.length === 0) {
+        const dirRes = await fetch('/api/players');
+        if (dirRes.ok) {
+          players = await dirRes.json();
+          headerTitle = "All Players Directory";
+        }
+      }
+      renderPlayerAutocomplete(idx, players || [], headerTitle);
+    } catch (err) {
+      console.error("Error loading players for dropdown:", err);
+    }
     return;
   }
 
@@ -2143,15 +2177,15 @@ async function onPlayerNameInput(idx, query) {
       const res = await fetch(`/api/players?q=${encodeURIComponent(q)}`);
       if (res.ok) {
         const matches = await res.json();
-        renderPlayerAutocomplete(idx, matches);
+        renderPlayerAutocomplete(idx, matches, `Search Results for "${q}"`);
       }
     } catch (err) {
       console.error("Autocomplete search error:", err);
     }
-  }, 180);
+  }, 150);
 }
 
-function renderPlayerAutocomplete(idx, matches) {
+function renderPlayerAutocomplete(idx, matches, headerTitle = "Select Player") {
   const dropdown = document.getElementById(`p-autocomplete-${idx}`);
   if (!dropdown) return;
   if (!matches || matches.length === 0) {
@@ -2160,10 +2194,15 @@ function renderPlayerAutocomplete(idx, matches) {
     return;
   }
 
-  dropdown.innerHTML = matches.slice(0, 6).map(p => {
+  const headerHtml = `
+    <div class="px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400 bg-slate-950/80 border-b border-slate-800">
+      ${headerTitle}
+    </div>
+  `;
+
+  const itemsHtml = matches.slice(0, 8).map(p => {
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ');
     const hcp = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '18.0';
-    const safeNick = (p.nickname || '').replace(/'/g, "\\'");
     return `
       <div onclick='selectAutocompletePlayer(${idx}, ${JSON.stringify(p).replace(/'/g, "&#39;")})'
            class="p-2.5 hover:bg-slate-800 cursor-pointer flex items-center justify-between text-left transition">
@@ -2177,6 +2216,8 @@ function renderPlayerAutocomplete(idx, matches) {
       </div>
     `;
   }).join('');
+
+  dropdown.innerHTML = headerHtml + itemsHtml;
   dropdown.classList.remove('hidden');
 }
 
@@ -2218,7 +2259,7 @@ async function savePlayersLineup() {
   for (let i = 0; i < count; i++) {
     const nameEl = document.getElementById(`p-name-${i}`);
     const name = nameEl?.value.trim() || DEFAULT_NAMES[i];
-    const playerId = nameEl?.dataset?.playerId || currentPlayers[i]?.player_id || null;
+    const playerId = (nameEl?.dataset?.playerId && nameEl.dataset.playerId.trim()) ? nameEl.dataset.playerId.trim() : null;
     const color = document.getElementById(`p-col-${i}`)?.value || DEFAULT_COLORS[i];
     const hcpOut = parseInt(document.getElementById(`p-out-${i}`)?.value) || 0;
     const hcpIn = parseInt(document.getElementById(`p-in-${i}`)?.value) || 0;

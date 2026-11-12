@@ -225,6 +225,13 @@ class Database:
             except Exception:
                 pass
 
+        # Clean up any dummy seed players ('PLAYER 1' .. 'PLAYER 6')
+        try:
+            self.execute("DELETE FROM user_players WHERE player_id IN ('ply-p1', 'ply-p2', 'ply-p3', 'ply-p4', 'ply-p5', 'ply-p6');")
+            self.execute("DELETE FROM players WHERE id IN ('ply-p1', 'ply-p2', 'ply-p3', 'ply-p4', 'ply-p5', 'ply-p6') OR nickname LIKE 'PLAYER %';")
+        except Exception:
+            pass
+
         db_type = "PostgreSQL" if self.is_postgres else f"SQLite ({SQLITE_DB_PATH})"
         print(f"[DB INIT] Database initialized successfully using {db_type}")
 
@@ -252,25 +259,8 @@ class Database:
                 print(f"[DB SEED ERROR] Failed to seed courses: {e}")
 
     def seed_players_if_empty(self):
-        """Pre-populates default players into the global players table if empty"""
-        existing = self.query_one("SELECT COUNT(*) as cnt FROM players;")
-        count = existing.get("cnt", 0) if existing else 0
-        if count == 0:
-            now = time.time()
-            defaults = [
-                ("ply-p1", "PLAYER 1", "Player", "One", None, 12.0),
-                ("ply-p2", "PLAYER 2", "Player", "Two", None, 14.0),
-                ("ply-p3", "PLAYER 3", "Player", "Three", None, 18.0),
-                ("ply-p4", "PLAYER 4", "Player", "Four", None, 20.0),
-                ("ply-p5", "PLAYER 5", "Player", "Five", None, 15.0),
-                ("ply-p6", "PLAYER 6", "Player", "Six", None, 16.0),
-            ]
-            for p_id, nick, first, last, em, hcp in defaults:
-                self.execute(
-                    "INSERT INTO players (id, nickname, first_name, last_name, email, user_id, current_handicap, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (p_id, nick, first, last, em, None, hcp, now, now)
-                )
-            print(f"[DB SEED] Seeded {len(defaults)} initial players into players table.")
+        """No dummy players pre-seeded; directory starts clean for user-created players."""
+        pass
 
     # ================= USER CRUD =================
     def upsert_user(self, user_id: str, email: str, name: str, picture: Optional[str] = None) -> Dict[str, Any]:

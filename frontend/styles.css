@@ -328,6 +328,29 @@ body.theme-fairway {
   color: #152019 !important;
 }
 
+/* Fairway Sage Buttons & Controls (mapped from dark bg-slate-800) */
+.theme-fairway .bg-slate-800,
+.theme-fairway .bg-slate-800\/90,
+.theme-fairway .bg-slate-800\/80,
+.theme-fairway .bg-slate-800\/60,
+.theme-fairway button.bg-slate-800,
+.theme-fairway a.bg-slate-800,
+.theme-fairway #btn-theme-toggle {
+  background-color: #edf4e9 !important;
+  color: #152019 !important;
+  border-color: #c4cec5 !important;
+}
+
+.theme-fairway .bg-slate-800:hover,
+.theme-fairway button.bg-slate-800:hover,
+.theme-fairway a.bg-slate-800:hover,
+.theme-fairway .hover\:bg-slate-700:hover,
+.theme-fairway #btn-theme-toggle:hover {
+  background-color: #e2ede0 !important;
+  color: #16452e !important;
+  border-color: #87998c !important;
+}
+
 .theme-fairway .border-slate-800,
 .theme-fairway .border-slate-800\/80,
 .theme-fairway .border-slate-800\/60,

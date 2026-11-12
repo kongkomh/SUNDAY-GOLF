@@ -246,7 +246,8 @@ class RoundManager:
                     "color": color,
                     "hcp_out": hcp_out,
                     "hcp_in": hcp_in,
-                    "default_team": team
+                    "default_team": team,
+                    "player_id": p.get("player_id") or None
                 })
 
             valid_ids = set(p["id"] for p in clean_players)
