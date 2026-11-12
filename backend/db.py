@@ -834,28 +834,63 @@ class Database:
                 diffs = [float(r["differential"]) for r in history_rows]
                 diffs.sort()
                 count = len(diffs)
-                if count >= 20:
-                    lowest = diffs[:8]
-                elif count >= 15:
-                    lowest = diffs[:6]
-                elif count >= 12:
-                    lowest = diffs[:4]
-                elif count >= 9:
-                    lowest = diffs[:3]
-                elif count >= 6:
-                    lowest = diffs[:2]
-                elif count >= 3:
-                    lowest = diffs[:1]
-                else:
-                    lowest = diffs[:1]
-
-                if lowest:
-                    new_hcp = round(sum(lowest) / len(lowest), 1)
+                new_hcp = calculate_whs_handicap(diffs)
+                if new_hcp is not None:
                     self.execute(
                         "UPDATE players SET current_handicap = ?, updated_at = ? WHERE id = ?",
                         (new_hcp, now, player_db_id)
                     )
-                    print(f"[WHS HCP] Updated {p_record['nickname']} handicap to {new_hcp} (lowest {len(lowest)} of {count} rounds).")
+                    print(f"[WHS HCP] Updated {p_record['nickname']} handicap to {new_hcp} (USGA Rule 5.2a using {count} rounds).")
+                else:
+                    print(f"[WHS HCP] {p_record['nickname']} has {count} round(s) recorded (minimum 3 required for official Handicap Index).")
+
+
+def calculate_whs_handicap(diffs: List[float]) -> Optional[float]:
+    """
+    USGA Rule 5.2a: Handicap Index calculation based on number of differentials available (up to 20).
+    diffs must be sorted ascending (lowest first).
+    Returns None if fewer than 3 differentials (minimum requirement is 3 rounds).
+    """
+    count = len(diffs)
+    if count < 3:
+        return None
+
+    if count == 3:
+        used = diffs[:1]
+        adj = -2.0
+    elif count == 4:
+        used = diffs[:1]
+        adj = -1.0
+    elif count == 5:
+        used = diffs[:1]
+        adj = 0.0
+    elif count == 6:
+        used = diffs[:2]
+        adj = -1.0
+    elif count in (7, 8):
+        used = diffs[:2]
+        adj = 0.0
+    elif 9 <= count <= 11:
+        used = diffs[:3]
+        adj = 0.0
+    elif 12 <= count <= 14:
+        used = diffs[:4]
+        adj = 0.0
+    elif count in (15, 16):
+        used = diffs[:5]
+        adj = 0.0
+    elif count in (17, 18):
+        used = diffs[:6]
+        adj = 0.0
+    elif count == 19:
+        used = diffs[:7]
+        adj = 0.0
+    else:  # count >= 20
+        used = diffs[:8]
+        adj = 0.0
+
+    avg_lowest = sum(used) / len(used)
+    return round(avg_lowest + adj, 1)
 
 
 # Global database singleton

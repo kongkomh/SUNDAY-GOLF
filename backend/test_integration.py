@@ -300,4 +300,22 @@ assert r_prof["json"]["player"]["nickname"] == f"PRO_{dummy_nick}"
 assert float(r_prof["json"]["player"]["current_handicap"]) == 9.2
 print(f"PASS: Player profile nickname and handicap updated: {r_prof['json']['player']['nickname']} (HCP {r_prof['json']['player']['current_handicap']})")
 
-print("\nALL 23 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")
+# 24. Verify USGA Rule 5.2a Handicap Index Calculations for all tiers (<3, 3, 4, 5, 6, 7-8, 9-11, 12-14, 15-16, 17-18, 19, 20)
+from db import calculate_whs_handicap
+base_diffs = [10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0, 42.0, 44.0, 46.0, 48.0]
+assert calculate_whs_handicap(base_diffs[:2]) is None  # < 3 rounds: None
+assert calculate_whs_handicap(base_diffs[:3]) == 8.0   # 3 rounds: lowest 1 (10.0) - 2.0 = 8.0
+assert calculate_whs_handicap(base_diffs[:4]) == 9.0   # 4 rounds: lowest 1 (10.0) - 1.0 = 9.0
+assert calculate_whs_handicap(base_diffs[:5]) == 10.0  # 5 rounds: lowest 1 (10.0) + 0 = 10.0
+assert calculate_whs_handicap(base_diffs[:6]) == 10.0  # 6 rounds: avg lowest 2 (11.0) - 1.0 = 10.0
+assert calculate_whs_handicap(base_diffs[:7]) == 11.0  # 7 rounds: avg lowest 2 (11.0) + 0 = 11.0
+assert calculate_whs_handicap(base_diffs[:8]) == 11.0  # 8 rounds: avg lowest 2 (11.0) + 0 = 11.0
+assert calculate_whs_handicap(base_diffs[:10]) == 12.0 # 10 rounds: avg lowest 3 (10+12+14)/3 = 12.0
+assert calculate_whs_handicap(base_diffs[:13]) == 13.0 # 13 rounds: avg lowest 4 (10+12+14+16)/4 = 13.0
+assert calculate_whs_handicap(base_diffs[:16]) == 14.0 # 16 rounds: avg lowest 5 (10+12+14+16+18)/5 = 14.0
+assert calculate_whs_handicap(base_diffs[:18]) == 15.0 # 18 rounds: avg lowest 6 = 15.0
+assert calculate_whs_handicap(base_diffs[:19]) == 16.0 # 19 rounds: avg lowest 7 = 16.0
+assert calculate_whs_handicap(base_diffs[:20]) == 17.0 # 20 rounds: avg lowest 8 = 17.0
+print("PASS: USGA Rule 5.2a Handicap Index calculation verified across all 12 tiers (<3 through 20+)")
+
+print("\nALL 24 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")

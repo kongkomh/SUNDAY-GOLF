@@ -305,6 +305,12 @@ class RoundManager:
     def finish_round(self, round_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
             round_data = db.get_round(round_id)
+            if not round_data:
+                return None
+            owner = round_data.get("owner_id")
+            if owner and user_id != owner:
+                return {"error": "Only the round creator can finish this round"}
+
             db.set_round_finished(round_id, True)
             state = self.get_round_state(round_id, user_id)
             if round_data and state:
@@ -772,7 +778,10 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         # 5. Round Actions: finish & unlock
         if path == f"/api/round/{round_id}/finish" or (path == "/api/finish"):
             state = round_manager.finish_round(round_id, user_id)
-            self.send_json_response(state)
+            if state and "error" in state:
+                self.send_json_response(state, status=403)
+            else:
+                self.send_json_response(state)
             return
 
         if path == f"/api/round/{round_id}/unlock" or (path == "/api/unlock"):

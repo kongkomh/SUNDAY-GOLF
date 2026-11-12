@@ -522,7 +522,7 @@ function renderHeader() {
     courseEl.textContent = t.course_name || 'Krungthep Kreetha';
   }
 
-  // Round State Action Button (Finish / Unlock)
+  // Round State Action Status (LOCKED / Unlock Round when finished; Finish Round moved to last hole)
   const actionWrap = document.getElementById('round-state-action-wrap');
   if (actionWrap) {
     if (t.is_finished) {
@@ -539,12 +539,7 @@ function renderHeader() {
         ` : ''}
       `;
     } else {
-      actionWrap.innerHTML = `
-        <button type="button" onclick="finishCurrentRound()" class="py-1 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-black text-[11px] transition flex items-center gap-1 shadow-sm">
-          <i data-lucide="flag" class="w-3 h-3"></i>
-          <span>Finish Round</span>
-        </button>
-      `;
+      actionWrap.innerHTML = '';
     }
   }
 
@@ -1252,19 +1247,24 @@ function renderScoringActionBar(hNum, currCalc) {
 
   const isRoundFinished = Boolean(state.tournament?.is_finished);
   const nextHole = getNextHoleNumber(hNum);
+  const playedSeq = getPlayedHoleOrder();
+  const lastHole = (playedSeq && playedSeq.length > 0) ? playedSeq[playedSeq.length - 1] : 18;
+  const isLastHole = (hNum === lastHole);
 
   if (isRoundFinished) {
     container.innerHTML = `
-      <div class="flex-1 py-3 px-4 rounded-2xl bg-slate-900 border border-slate-800 text-center text-slate-400 font-bold text-xs flex items-center justify-center gap-2 shadow-inner">
-        <i data-lucide="lock" class="w-4 h-4 text-amber-400"></i>
-        <span>This round is finished and locked (Read-Only)</span>
+      <div class="flex items-center gap-2 sm:gap-3">
+        <div class="flex-1 py-3 px-4 rounded-2xl bg-slate-900 border border-slate-800 text-center text-slate-400 font-bold text-xs flex items-center justify-center gap-2 shadow-inner">
+          <i data-lucide="lock" class="w-4 h-4 text-amber-400"></i>
+          <span>This round is finished and locked (Read-Only)</span>
+        </div>
+        ${nextHole ? `
+          <button type="button" onclick="selectHole(${nextHole})" class="py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
+            <span>Hole ${nextHole}</span>
+            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </button>
+        ` : ''}
       </div>
-      ${nextHole ? `
-        <button type="button" onclick="selectHole(${nextHole})" class="py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
-          <span>Hole ${nextHole}</span>
-          <i data-lucide="arrow-right" class="w-4 h-4"></i>
-        </button>
-      ` : ''}
     `;
     initIcons();
     return;
@@ -1275,40 +1275,66 @@ function renderScoringActionBar(hNum, currCalc) {
   const isUnlocked = Boolean(state.unlockedHoles[`${hNum}`]);
   const isLocked = isHolePlayed && !isUnlocked;
 
+  let topRowHtml = '';
   if (isLocked) {
-    container.innerHTML = `
-      <button type="button" onclick="openEditWarningModal(${hNum})" class="flex-1 py-3 px-4 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-extrabold text-xs border border-amber-500/40 transition flex items-center justify-center gap-1.5 shadow-sm">
-        <i data-lucide="unlock" class="w-4 h-4 text-amber-400"></i>
-        <span>Unlock & Edit Hole ${hNum}</span>
-      </button>
-      ${nextHole ? `
-        <button type="button" onclick="selectHole(${nextHole})" class="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20">
-          <span>Next Hole (${nextHole})</span>
-          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    topRowHtml = `
+      <div class="flex items-center gap-2 sm:gap-3">
+        <button type="button" onclick="openEditWarningModal(${hNum})" class="flex-1 py-3 px-4 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-extrabold text-xs border border-amber-500/40 transition flex items-center justify-center gap-1.5 shadow-sm">
+          <i data-lucide="unlock" class="w-4 h-4 text-amber-400"></i>
+          <span>Unlock & Edit Hole ${hNum}</span>
         </button>
-      ` : ''}
+        ${nextHole ? `
+          <button type="button" onclick="selectHole(${nextHole})" class="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20">
+            <span>Next Hole (${nextHole})</span>
+            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </button>
+        ` : ''}
+      </div>
     `;
   } else {
-    container.innerHTML = `
-      <button type="button" onclick="clearHoleScores(${hNum})" class="py-3 px-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-rose-400 font-extrabold text-xs border border-slate-800 transition flex items-center justify-center gap-1" title="Clear Hole ${hNum}">
-        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-        <span class="hidden sm:inline">Clear</span>
-      </button>
-
-      <button type="button" onclick="saveHoleScores(${hNum})" class="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-green-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-1.5">
-        <i data-lucide="check-circle-2" class="w-4 h-4"></i>
-        <span>Save</span>
-      </button>
-
-      ${nextHole ? `
-        <button type="button" onclick="selectHole(${nextHole})" class="py-3.5 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs sm:text-sm border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
-          <span>Next Hole (${nextHole})</span>
-          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+    topRowHtml = `
+      <div class="flex items-center gap-2 sm:gap-3">
+        <button type="button" onclick="confirmResetHole(${hNum})" class="py-3.5 px-3.5 sm:px-4 rounded-2xl bg-slate-900 hover:bg-rose-950/40 text-slate-300 hover:text-rose-400 font-black text-xs sm:text-sm border border-slate-800 hover:border-rose-700/50 transition flex items-center justify-center gap-1.5 shadow-md shrink-0" title="Reset Hole ${hNum}">
+          <i data-lucide="rotate-ccw" class="w-4 h-4 text-rose-400"></i>
+          <span>RESET HOLE</span>
         </button>
-      ` : ''}
+
+        <button type="button" onclick="saveHoleScores(${hNum})" class="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-green-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-1.5">
+          <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+          <span>Save</span>
+        </button>
+
+        ${nextHole ? `
+          <button type="button" onclick="selectHole(${nextHole})" class="py-3.5 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white font-extrabold text-xs sm:text-sm border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-md">
+            <span>Next Hole (${nextHole})</span>
+            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </button>
+        ` : ''}
+      </div>
     `;
   }
+
+  // Under the last hole (Hole 18 if starting Hole 1, Hole 9 if starting Hole 10), render Finish Round button below SAVE
+  let finishRoundHtml = '';
+  if (isLastHole) {
+    finishRoundHtml = `
+      <div class="pt-1">
+        <button type="button" onclick="finishCurrentRound()" class="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/25 transition flex items-center justify-center gap-2">
+          <i data-lucide="flag" class="w-4 h-4"></i>
+          <span>FINISH ROUND</span>
+        </button>
+      </div>
+    `;
+  }
+
+  container.innerHTML = topRowHtml + finishRoundHtml;
   initIcons();
+}
+
+function confirmResetHole(hNum) {
+  if (confirm(`Reset all entered scores for Hole ${hNum}?`)) {
+    clearHoleScores(hNum);
+  }
 }
 
 // Drag and Drop Handlers
