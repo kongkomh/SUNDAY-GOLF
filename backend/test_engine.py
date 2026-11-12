@@ -417,5 +417,18 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertEqual(p2["total_cash"], 600.0)
         self.assertEqual(p3["total_cash"], -1200.0)
 
+    def test_wolf_turbo_holes_front_back_alternation(self):
+        from engine import compute_wolf_turbo_holes, get_played_hole_order
+        for sh in [1, 10]:
+            seq = get_played_hole_order(sh)
+            front_set = set(seq[:9])
+            back_set = set(seq[9:])
+            turbo = compute_wolf_turbo_holes(self.players, self.holes, starting_hole=sh)
+            self.assertEqual(len(turbo), 4, f"Expected 4 turbo holes, got {len(turbo)}")
+            front_count = sum(1 for h in turbo if h in front_set)
+            back_count = sum(1 for h in turbo if h in back_set)
+            self.assertEqual(front_count, 2, f"Starting hole {sh}: Expected 2 in front 9, got {front_count}")
+            self.assertEqual(back_count, 2, f"Starting hole {sh}: Expected 2 in back 9, got {back_count}")
+
 if __name__ == "__main__":
     unittest.main()

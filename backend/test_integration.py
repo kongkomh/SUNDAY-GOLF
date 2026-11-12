@@ -194,4 +194,58 @@ r = invoke_request("GET", f"/api/round/{round_id}", headers=auth_headers)
 assert r["status"] == 404
 print("PASS: Round 404 after deletion")
 
-print("\nALL 14 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")
+# 15. Verify Course Tees in GET /api/courses
+r = invoke_request("GET", "/api/courses", headers=auth_headers)
+assert r["status"] == 200
+courses = r["json"]
+assert len(courses) > 0
+assert "tees" in courses[0]
+tee_ids = [t["id"] for t in courses[0]["tees"]]
+assert "white" in tee_ids and "red" in tee_ids and "blue" in tee_ids
+print("PASS: Courses include Tees with slope and rating")
+
+# 16. Create New Player via POST /api/players
+r = invoke_request("POST", "/api/players", body={
+    "nickname": "TIGER",
+    "first_name": "Eldrick",
+    "last_name": "Woods",
+    "handicap": 0.0
+}, headers=auth_headers)
+assert r["status"] == 200
+new_ply = r["json"]
+assert new_ply["nickname"] == "TIGER"
+tiger_id = new_ply["id"]
+print(f"PASS: Created player {new_ply['nickname']} ({tiger_id})")
+
+# 17. Verify duplicate player creation returns 409 Conflict
+r = invoke_request("POST", "/api/players", body={
+    "nickname": "TIGER",
+    "first_name": "Eldrick",
+    "last_name": "Woods",
+    "handicap": 0.0
+}, headers=auth_headers)
+assert r["status"] == 409
+print("PASS: Duplicate player prevented with 409 Conflict")
+
+# 18. GET /api/my-players
+r = invoke_request("GET", "/api/my-players", headers=auth_headers)
+assert r["status"] == 200
+my_p_ids = [p["id"] for p in r["json"]]
+assert tiger_id in my_p_ids
+print("PASS: GET /api/my-players contains newly created player")
+
+# 19. GET /api/players/stats
+r = invoke_request("GET", "/api/players/stats?currency=THB&range=all", headers=auth_headers)
+assert r["status"] == 200
+assert isinstance(r["json"], list)
+print("PASS: GET /api/players/stats returns multi-currency aggregated stats")
+
+# 20. DELETE /api/my-players/<id>
+r = invoke_request("DELETE", f"/api/my-players/{tiger_id}", headers=auth_headers)
+assert r["status"] == 200
+r_after = invoke_request("GET", "/api/my-players", headers=auth_headers)
+after_ids = [p["id"] for p in r_after["json"]]
+assert tiger_id not in after_ids
+print("PASS: Removed player from user roster")
+
+print("\nALL 20 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")

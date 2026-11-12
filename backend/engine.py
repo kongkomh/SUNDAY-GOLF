@@ -176,29 +176,71 @@ def compute_wolf_turbo_holes(players: List[Dict[str, Any]], holes: List[Dict[str
     """
     In Wolf mode:
     Ensure exactly 1 turbo hole for each wolf across the played sequence.
-    Prefers non-Par 3 holes in the later portion of their wolf rotation.
+    Alternates and balances turbo holes between the front 9 and back 9 of the round,
+    preferring non-Par 3 holes in the later portion of each half.
     """
     n = len(players)
     if n == 0:
         return [9, 18]
 
+    import itertools
+
     played_seq = get_played_hole_order(starting_hole)
     hole_par_map = {int(h.get("hole", i + 1)): int(h.get("par", 4)) for i, h in enumerate(holes)}
 
-    turbo_holes = []
+    front_set = set(played_seq[:9])
+    back_set = set(played_seq[9:])
+
+    p_wolf_data = []
     for p_idx in range(n):
-        # All holes in played sequence where player p_idx is the wolf
-        wolf_holes = [h for pos, h in enumerate(played_seq) if (pos % n) == p_idx]
-        if not wolf_holes:
+        w_holes = [h for pos, h in enumerate(played_seq) if (pos % n) == p_idx]
+        f_holes = [h for h in w_holes if h in front_set]
+        b_holes = [h for h in w_holes if h in back_set]
+
+        f_non_par3 = [h for h in f_holes if hole_par_map.get(h, 4) != 3]
+        b_non_par3 = [h for h in b_holes if hole_par_map.get(h, 4) != 3]
+
+        p_wolf_data.append({
+            "p_idx": p_idx,
+            "front": f_non_par3 if f_non_par3 else f_holes,
+            "back": b_non_par3 if b_non_par3 else b_holes,
+            "front_is_par3": len(f_non_par3) == 0 and len(f_holes) > 0,
+            "back_is_par3": len(b_non_par3) == 0 and len(b_holes) > 0
+        })
+
+    best_assignment = None
+    min_par3_count = 999
+
+    for choice in itertools.product([0, 1], repeat=n):
+        front_count = sum(1 for c in choice if c == 0)
+        back_count = n - front_count
+        if abs(front_count - back_count) > 1:
             continue
 
-        # Prefer non-Par 3 holes
-        non_par3 = [h for h in wolf_holes if hole_par_map.get(h, 4) != 3]
-        candidates = non_par3 if non_par3 else wolf_holes
+        par3_count = 0
+        for i, c in enumerate(choice):
+            if c == 0 and p_wolf_data[i]["front_is_par3"]:
+                par3_count += 1
+            elif c == 1 and p_wolf_data[i]["back_is_par3"]:
+                par3_count += 1
 
-        # Pick the candidate latest in the played round for this wolf
-        chosen = max(candidates, key=lambda h: played_seq.index(h))
-        turbo_holes.append(chosen)
+        if par3_count < min_par3_count:
+            min_par3_count = par3_count
+            best_assignment = choice
+            if par3_count == 0:
+                break
+
+    if not best_assignment:
+        best_assignment = tuple(0 if i % 2 == 0 else 1 for i in range(n))
+
+    turbo_holes = []
+    for i, c in enumerate(best_assignment):
+        candidates = p_wolf_data[i]["front"] if c == 0 else p_wolf_data[i]["back"]
+        if not candidates:
+            candidates = p_wolf_data[i]["back"] if c == 0 else p_wolf_data[i]["front"]
+        if candidates:
+            chosen = max(candidates, key=lambda h: played_seq.index(h))
+            turbo_holes.append(chosen)
 
     return sorted(list(set(turbo_holes)))
 

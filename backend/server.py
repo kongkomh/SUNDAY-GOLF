@@ -88,6 +88,7 @@ class RoundManager:
             "course_name": c_name,
             "starting_hole": 1,
             "is_finished": False,
+            "selected_tee": selected_course.get("tees", [{}])[2] if selected_course and selected_course.get("tees") else db.DEFAULT_TEES[2],
             "game_settings": copy.deepcopy(DEFAULT_SETTINGS),
             "players": copy.deepcopy(DEFAULT_PLAYERS),
             "holes": holes,
@@ -108,6 +109,7 @@ class RoundManager:
         state["is_finished"] = bool(round_data.get("is_finished", False))
         state["is_owner"] = bool(user_id and round_data.get("owner_id") and user_id == round_data.get("owner_id"))
         state["starting_hole"] = round_data.get("starting_hole", 1)
+        state["selected_tee"] = round_data.get("selected_tee") or db.DEFAULT_TEES[2]
         state["created_at"] = round_data.get("created_at")
         state["updated_at"] = round_data.get("updated_at")
         return state
@@ -253,6 +255,8 @@ class RoundManager:
 
             c_id = course_payload.get("course_id") or round_data.get("course_id")
             c_name = course_payload.get("course_name") or round_data.get("course_name")
+            selected_tee = course_payload.get("selected_tee") or round_data.get("selected_tee") or db.DEFAULT_TEES[2]
+            tees_in = course_payload.get("tees")
 
             holes_in = course_payload.get("holes")
             clean_holes = []
@@ -269,12 +273,13 @@ class RoundManager:
 
             # Keep global courses catalog synced if course exists
             if c_id:
-                db.update_course(c_id, c_name, clean_holes)
+                db.update_course(c_id, c_name, clean_holes, tees=tees_in)
 
             db.update_round(round_id, {
                 "course_id": c_id,
                 "course_name": c_name,
-                "holes": clean_holes
+                "holes": clean_holes,
+                "selected_tee": selected_tee
             })
             state = self.get_round_state(round_id, user_id)
             self.broadcast_event(round_id, "course_update", state)
@@ -282,8 +287,14 @@ class RoundManager:
 
     def finish_round(self, round_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         with self.lock:
+            round_data = db.get_round(round_id)
             db.set_round_finished(round_id, True)
             state = self.get_round_state(round_id, user_id)
+            if round_data and state:
+                try:
+                    db.record_round_handicaps(round_id, round_data, state)
+                except Exception as e:
+                    print(f"[HCP ERROR] {e}")
             self.broadcast_event(round_id, "round_finished", state)
             return state
 
@@ -379,7 +390,7 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             return None
         return db.get_user(user_id)
 
-    def get_requested_round_id(self, parsed) -> str:
+    def get_requested_round_id(self, parsed, user_id: Optional[str] = None) -> str:
         # 1. From path: /api/round/<round_id>/... or /round/<round_id>
         parts = parsed.path.strip("/").split("/")
         if len(parts) >= 2 and parts[0] == "round":
@@ -392,9 +403,12 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         if "round" in params:
             return params["round"][0]
 
-        # 3. Default to latest or fresh round
-        default_r = round_manager.get_or_create_default_round()
-        return default_r["id"]
+        # 3. Default to latest active (unfinished) round for user, or create fresh
+        active = db.get_latest_active_round(user_id)
+        if active:
+            return active["id"]
+        fresh = round_manager.create_fresh_round(owner_id=user_id)
+        return fresh["id"]
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -476,7 +490,35 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_response(courses)
             return
 
-        # 4. User's Rounds List API
+        # 4. Players Directory & Search API
+        if path == "/api/players":
+            params = urllib.parse.parse_qs(parsed.query)
+            q = params.get("q", [None])[0]
+            players_list = db.list_players(q)
+            self.send_json_response(players_list)
+            return
+
+        # 5. User's Roster API (My Players)
+        if path == "/api/my-players":
+            if user_id:
+                my_players = db.list_user_players(user_id)
+            else:
+                my_players = db.list_players()[:6]
+            self.send_json_response(my_players)
+            return
+
+        # 6. Player Cash Stats API with Currency & Date Filter
+        if path == "/api/players/stats":
+            params = urllib.parse.parse_qs(parsed.query)
+            r_type = params.get("range", ["all"])[0]
+            s_date = params.get("start", [None])[0]
+            e_date = params.get("end", [None])[0]
+            curr = params.get("currency", ["THB"])[0]
+            stats = db.get_players_stats(user_id, range_type=r_type, start_date=s_date, end_date=e_date, target_currency=curr)
+            self.send_json_response(stats)
+            return
+
+        # 7. User's Rounds List API
         if path == "/api/rounds":
             if not user_id:
                 self.send_json_response([])
@@ -485,9 +527,9 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json_response(rounds)
             return
 
-        # 5. Round State API: /api/round/<round_id> or legacy /api/tournament
-        if path.startswith("/api/round/") or path == "/api/tournament":
-            round_id = self.get_requested_round_id(parsed)
+        # 8. Round State API: /api/round/<round_id> or legacy /api/tournament
+        if path.startswith("/api/round/"):
+            round_id = self.get_requested_round_id(parsed, user_id=user_id)
             state = round_manager.get_round_state(round_id, user_id)
             if not state:
                 self.send_error(404, "Round Not Found")
@@ -495,9 +537,19 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_response(state)
             return
 
-        # 6. Server-Sent Events (SSE) Stream
+        if path == "/api/tournament":
+            round_id = self.get_requested_round_id(parsed, user_id=user_id)
+            state = round_manager.get_round_state(round_id, user_id)
+            if not state:
+                active = db.get_latest_active_round(user_id)
+                fallback_id = active["id"] if active else round_manager.create_fresh_round(owner_id=user_id)["id"]
+                state = round_manager.get_round_state(fallback_id, user_id)
+            self.send_json_response(state)
+            return
+
+        # 9. Server-Sent Events (SSE) Stream
         if path.startswith("/api/events") or path.startswith("/api/round/") and path.endswith("/events"):
-            round_id = self.get_requested_round_id(parsed)
+            round_id = self.get_requested_round_id(parsed, user_id=user_id)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -577,7 +629,8 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/courses" or (path == "/api/course" and body.get("is_new")):
             course_name = body.get("course_name") or "Custom Course"
             holes = body.get("holes") or DEFAULT_HOLES
-            new_c = db.create_course(course_name, holes)
+            tees = body.get("tees") or db.DEFAULT_TEES
+            new_c = db.create_course(course_name, holes, tees=tees)
             courses = db.list_courses()
             self.send_json_response({
                 "courses": courses,
@@ -585,8 +638,48 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             })
             return
 
-        # 4. Resolve round_id for round operations
-        round_id = self.get_requested_round_id(parsed)
+        # 4. Create New Global Player (with duplicate prevention)
+        if path == "/api/players":
+            nickname = (body.get("nickname") or "").strip()
+            first_name = (body.get("first_name") or "").strip()
+            last_name = (body.get("last_name") or "").strip()
+            email = (body.get("email") or "").strip() or None
+            try:
+                hcp = float(body.get("current_handicap") or body.get("handicap") or 18.0)
+            except Exception:
+                hcp = 18.0
+
+            if not nickname or not first_name or not last_name:
+                self.send_json_response({"error": "Nickname, First Name, and Last Name are required."}, status=400)
+                return
+
+            existing = db.check_player_exists(nickname, first_name, last_name)
+            if existing:
+                self.send_json_response({
+                    "error": f"A player with nickname '{nickname}' or name '{first_name} {last_name}' already exists in the players catalog."
+                }, status=409)
+                return
+
+            linked_uid = user_id if (user and email and email.lower() == user.get("email", "").lower()) else None
+            new_p = db.create_player(nickname, first_name, last_name, email=email, user_id=linked_uid, current_handicap=hcp)
+            if user_id:
+                db.add_user_player(user_id, new_p["id"])
+            self.send_json_response(new_p)
+            return
+
+        # 5. Add Player to User Roster (My Players)
+        if path == "/api/my-players":
+            ply_id = body.get("player_id")
+            if not ply_id:
+                self.send_json_response({"error": "player_id required"}, status=400)
+                return
+            if user_id:
+                db.add_user_player(user_id, ply_id)
+            self.send_json_response({"status": "ok", "success": True})
+            return
+
+        # 6. Resolve round_id for round operations
+        round_id = self.get_requested_round_id(parsed, user_id=user_id)
 
         # 5. Round Actions: finish & unlock
         if path == f"/api/round/{round_id}/finish" or (path == "/api/finish"):
@@ -660,7 +753,16 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         user = self.get_current_user()
         user_id = user["id"] if user else None
 
-        round_id = self.get_requested_round_id(parsed)
+        # 1. Remove player from user roster
+        if path.startswith("/api/my-players/"):
+            ply_id = path.replace("/api/my-players/", "").strip("/")
+            if ply_id and user_id:
+                db.remove_user_player(user_id, ply_id)
+            self.send_json_response({"status": "ok", "success": True})
+            return
+
+        # 2. Delete Round
+        round_id = self.get_requested_round_id(parsed, user_id=user_id)
         if path == f"/api/round/{round_id}" or path.startswith("/api/round/"):
             round_data = db.get_round(round_id)
             if not round_data:

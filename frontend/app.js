@@ -199,6 +199,20 @@ async function fetchInitialState() {
       state.currentHole = data.current_display_hole || data.starting_hole || 1;
       updateTournamentState(data);
       setupSSE();
+    } else if (res.status === 404 && urlRoundId) {
+      // If round was deleted or not found, clear URL parameter and load active/fresh round
+      window.history.replaceState(null, '', '/');
+      const fallbackRes = await fetch('/api/tournament');
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        state.roundId = fallbackData.round_id || fallbackData.id;
+        if (state.roundId) {
+          window.history.replaceState(null, '', `/?round=${state.roundId}`);
+        }
+        state.currentHole = fallbackData.current_display_hole || fallbackData.starting_hole || 1;
+        updateTournamentState(fallbackData);
+        setupSSE();
+      }
     }
   } catch (err) {
     console.error("Failed to fetch initial state:", err);
@@ -1703,6 +1717,9 @@ function renderSettingsForms() {
 
   // Course Holes Table
   renderCourseHolesTable();
+
+  // Course Tees Selection
+  renderCourseTees();
 }
 
 function togglePlayerLineupAccordion() {
@@ -1928,7 +1945,7 @@ function renderPlayerLineupCards(players) {
 
   container.innerHTML = players.map((p, idx) => {
     return `
-      <div id="cfg-player-card-${idx}" class="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3 shadow-md">
+      <div id="cfg-player-card-${idx}" class="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3 shadow-md relative">
         
         <div class="flex items-center justify-between gap-2 pb-1 border-b border-slate-800">
           <span class="text-xs font-black text-amber-400 uppercase">Player ${idx + 1}</span>
@@ -1938,9 +1955,16 @@ function renderPlayerLineupCards(players) {
           </div>
         </div>
 
-        <div>
+        <div class="relative">
           <label class="block text-[11px] font-bold text-slate-300 mb-1">Player Name</label>
-          <input id="p-name-${idx}" type="text" value="${p.name || DEFAULT_NAMES[idx]}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs focus:ring-1 focus:ring-amber-500">
+          <input id="p-name-${idx}" type="text" value="${p.name || DEFAULT_NAMES[idx]}"
+                 data-player-id="${p.player_id || ''}"
+                 oninput="onPlayerNameInput(${idx}, this.value)"
+                 onfocus="onPlayerNameInput(${idx}, this.value)"
+                 autocomplete="off"
+                 placeholder="Type to search player..."
+                 class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs focus:ring-1 focus:ring-amber-500">
+          <div id="p-autocomplete-${idx}" class="hidden absolute left-0 right-0 top-full mt-1 z-40 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto divide-y divide-slate-800"></div>
         </div>
 
         <div class="grid grid-cols-2 gap-2 text-xs">
@@ -1959,6 +1983,89 @@ function renderPlayerLineupCards(players) {
   }).join('');
 }
 
+let playerSearchDebounce = null;
+async function onPlayerNameInput(idx, query) {
+  const dropdown = document.getElementById(`p-autocomplete-${idx}`);
+  if (!dropdown) return;
+  const q = (query || '').trim();
+  if (!q) {
+    dropdown.classList.add('hidden');
+    dropdown.innerHTML = '';
+    return;
+  }
+
+  if (playerSearchDebounce) clearTimeout(playerSearchDebounce);
+  playerSearchDebounce = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/players?q=${encodeURIComponent(q)}`);
+      if (res.ok) {
+        const matches = await res.json();
+        renderPlayerAutocomplete(idx, matches);
+      }
+    } catch (err) {
+      console.error("Autocomplete search error:", err);
+    }
+  }, 180);
+}
+
+function renderPlayerAutocomplete(idx, matches) {
+  const dropdown = document.getElementById(`p-autocomplete-${idx}`);
+  if (!dropdown) return;
+  if (!matches || matches.length === 0) {
+    dropdown.innerHTML = `<div class="p-2.5 text-slate-400 text-[11px] text-center font-bold">No players found</div>`;
+    dropdown.classList.remove('hidden');
+    return;
+  }
+
+  dropdown.innerHTML = matches.slice(0, 6).map(p => {
+    const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ');
+    const hcp = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '18.0';
+    const safeNick = (p.nickname || '').replace(/'/g, "\\'");
+    return `
+      <div onclick='selectAutocompletePlayer(${idx}, ${JSON.stringify(p).replace(/'/g, "&#39;")})'
+           class="p-2.5 hover:bg-slate-800 cursor-pointer flex items-center justify-between text-left transition">
+        <div class="min-w-0 pr-2">
+          <div class="font-black text-amber-400 text-xs truncate">${p.nickname}</div>
+          <div class="text-[10px] text-slate-400 truncate">${fullName} ${p.email ? '• ' + p.email : ''}</div>
+        </div>
+        <div class="shrink-0 text-right">
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-mono font-bold">HCP ${hcp}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  dropdown.classList.remove('hidden');
+}
+
+function selectAutocompletePlayer(idx, player) {
+  const nameInp = document.getElementById(`p-name-${idx}`);
+  const outInp = document.getElementById(`p-out-${idx}`);
+  const inInp = document.getElementById(`p-in-${idx}`);
+  const dropdown = document.getElementById(`p-autocomplete-${idx}`);
+
+  if (nameInp) {
+    nameInp.value = player.nickname || player.first_name || '';
+    nameInp.dataset.playerId = player.id;
+  }
+  const hcp = player.current_handicap != null ? Math.round(player.current_handicap) : 0;
+  const hcpOut = Math.min(9, Math.floor(hcp / 2));
+  const hcpIn = Math.min(9, Math.ceil(hcp / 2));
+  if (outInp) outInp.value = hcpOut;
+  if (inInp) inInp.value = hcpIn;
+
+  if (dropdown) {
+    dropdown.classList.add('hidden');
+    dropdown.innerHTML = '';
+  }
+}
+
+// Close autocomplete dropdowns on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('[id^="p-autocomplete-"]') && !e.target.closest('[id^="p-name-"]')) {
+    document.querySelectorAll('[id^="p-autocomplete-"]').forEach(el => el.classList.add('hidden'));
+  }
+});
+
 async function savePlayersLineup() {
   const countInp = document.getElementById('cfg-player-count');
   const count = Math.max(3, Math.min(6, parseInt(countInp?.value) || 4));
@@ -1966,7 +2073,9 @@ async function savePlayersLineup() {
 
   const playersPayload = [];
   for (let i = 0; i < count; i++) {
-    const name = document.getElementById(`p-name-${i}`)?.value.trim() || DEFAULT_NAMES[i];
+    const nameEl = document.getElementById(`p-name-${i}`);
+    const name = nameEl?.value.trim() || DEFAULT_NAMES[i];
+    const playerId = nameEl?.dataset?.playerId || currentPlayers[i]?.player_id || null;
     const color = document.getElementById(`p-col-${i}`)?.value || DEFAULT_COLORS[i];
     const hcpOut = parseInt(document.getElementById(`p-out-${i}`)?.value) || 0;
     const hcpIn = parseInt(document.getElementById(`p-in-${i}`)?.value) || 0;
@@ -1979,7 +2088,8 @@ async function savePlayersLineup() {
       color: color,
       hcp_out: hcpOut,
       hcp_in: hcpIn,
-      default_team: defaultTeam
+      default_team: defaultTeam,
+      player_id: playerId
     });
   }
 
@@ -1993,7 +2103,7 @@ async function savePlayersLineup() {
     if (res.ok) {
       const data = await res.json();
       updateTournamentState(data);
-      showToast("Players lineup saved successfully!");
+      showSuccessModal("Lineup Saved", "Players lineup and handicaps have been saved successfully!");
     } else if (res.status === 403) {
       showToast("Cannot edit: Round is finished and locked.", "lock");
     } else {
@@ -2068,7 +2178,7 @@ async function saveGameSettings() {
         state.currentHole = data.current_display_hole || data.starting_hole;
       }
       updateTournamentState(data);
-      showToast("Game settings saved successfully!");
+      showSuccessModal("Game Settings Saved", "Game mode and match rules have been saved successfully!");
     } else if (res.status === 403) {
       showToast("Cannot edit: Round is finished and locked.", "lock");
     } else {
@@ -2118,9 +2228,11 @@ function onCourseSelected(courseId) {
   state.tournament.course_id = selectedCourse.id;
   state.tournament.course_name = selectedCourse.name;
   state.tournament.holes = holes;
+  state.tournament.tees = selectedCourse.tees || DEFAULT_TEES;
 
   markCourseModified();
   renderCourseHolesTable();
+  renderCourseTees();
 }
 
 function startNewCourse() {
@@ -2236,6 +2348,63 @@ function recalculateCoursePars() {
   if (totEl) totEl.textContent = outPar + inPar;
 }
 
+const DEFAULT_TEES = [
+  { id: 'red', name: 'Red', color: '#ef4444', course_rating: 70.2, slope_rating: 120 },
+  { id: 'yellow', name: 'Yellow', color: '#eab308', course_rating: 71.4, slope_rating: 124 },
+  { id: 'white', name: 'White', color: '#f8fafc', course_rating: 72.0, slope_rating: 128 },
+  { id: 'blue', name: 'Blue', color: '#3b82f6', course_rating: 73.5, slope_rating: 133 },
+  { id: 'black', name: 'Black', color: '#0f172a', course_rating: 75.1, slope_rating: 138 }
+];
+
+function getActiveTees() {
+  const currentCourseId = state.tournament?.course_id;
+  const curCourse = (state.courses || []).find(c => c.id === currentCourseId);
+  return state.tournament?.tees || curCourse?.tees || DEFAULT_TEES;
+}
+
+function renderCourseTees() {
+  const container = document.getElementById('course-tees-container');
+  if (!container) return;
+
+  const tees = getActiveTees();
+  const selectedTeeId = state.tournament?.selected_tee || 'white';
+
+  container.innerHTML = tees.map(tee => {
+    const isSelected = (tee.id === selectedTeeId);
+    return `
+      <div onclick="selectCourseTee('${tee.id}')"
+           class="cursor-pointer p-2 rounded-xl border transition text-center space-y-1.5 ${isSelected ? 'border-amber-400 bg-amber-500/10 shadow-md ring-1 ring-amber-400/50' : 'border-slate-800 bg-slate-900/80 hover:border-slate-700'}">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-1.5">
+            <span class="w-3.5 h-3.5 rounded-full border border-white/40 shadow-sm shrink-0" style="background-color: ${tee.color};"></span>
+            <span class="font-black text-xs ${isSelected ? 'text-amber-400' : 'text-slate-200'}">${tee.name}</span>
+          </div>
+          <input type="radio" name="tee-radio" value="${tee.id}" ${isSelected ? 'checked' : ''} class="w-3.5 h-3.5 accent-amber-500 cursor-pointer">
+        </div>
+        <div class="grid grid-cols-2 gap-1 text-[10px] text-left pt-1 border-t border-slate-800/80">
+          <div>
+            <label class="block text-slate-400 font-bold">Rating</label>
+            <input type="number" step="0.1" id="tee-rating-${tee.id}" value="${tee.course_rating}" onclick="event.stopPropagation()" oninput="markCourseModified()"
+                   class="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-center text-white font-mono text-[11px]">
+          </div>
+          <div>
+            <label class="block text-slate-400 font-bold">Slope</label>
+            <input type="number" id="tee-slope-${tee.id}" value="${tee.slope_rating}" onclick="event.stopPropagation()" oninput="markCourseModified()"
+                   class="w-full bg-slate-950 border border-slate-800 rounded px-1 py-0.5 text-center text-white font-mono text-[11px]">
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectCourseTee(teeId) {
+  if (!state.tournament) return;
+  state.tournament.selected_tee = teeId;
+  renderCourseTees();
+  markCourseModified();
+}
+
 async function saveNewCourse() {
   const nameInp = document.getElementById('cfg-course-name');
   const courseName = nameInp?.value.trim();
@@ -2260,6 +2429,20 @@ async function saveNewCourse() {
     });
   }
 
+  const currentTees = getActiveTees();
+  const teesPayload = currentTees.map(t => {
+    const ratingInp = document.getElementById(`tee-rating-${t.id}`);
+    const slopeInp = document.getElementById(`tee-slope-${t.id}`);
+    return {
+      id: t.id,
+      name: t.name,
+      color: t.color,
+      course_rating: ratingInp ? (parseFloat(ratingInp.value) || t.course_rating) : t.course_rating,
+      slope_rating: slopeInp ? (parseInt(slopeInp.value) || t.slope_rating) : t.slope_rating
+    };
+  });
+  const selectedTee = state.tournament?.selected_tee || 'white';
+
   try {
     const res = await fetch('/api/courses', {
       method: 'POST',
@@ -2267,6 +2450,8 @@ async function saveNewCourse() {
       body: JSON.stringify({
         course_name: courseName,
         holes: holesPayload,
+        tees: teesPayload,
+        selected_tee: selectedTee,
         is_new: true,
         round_id: state.roundId
       })
@@ -2286,7 +2471,7 @@ async function saveNewCourse() {
         updateTournamentState(data.state);
       }
       renderCourseSelector();
-      showToast(`New course "${courseName}" saved!`);
+      showSuccessModal("New Course Saved", `New course "${courseName}" has been created and saved!`);
     } else if (res.status === 403) {
       showToast("Cannot edit: Round is finished and locked.", "lock");
     } else {
@@ -2324,6 +2509,20 @@ async function saveCourseSpecs() {
     });
   }
 
+  const currentTees = getActiveTees();
+  const teesPayload = currentTees.map(t => {
+    const ratingInp = document.getElementById(`tee-rating-${t.id}`);
+    const slopeInp = document.getElementById(`tee-slope-${t.id}`);
+    return {
+      id: t.id,
+      name: t.name,
+      color: t.color,
+      course_rating: ratingInp ? (parseFloat(ratingInp.value) || t.course_rating) : t.course_rating,
+      slope_rating: slopeInp ? (parseInt(slopeInp.value) || t.slope_rating) : t.slope_rating
+    };
+  });
+  const selectedTee = state.tournament?.selected_tee || 'white';
+
   try {
     const res = await fetch(getRoundApiUrl('/course'), {
       method: 'POST',
@@ -2331,7 +2530,9 @@ async function saveCourseSpecs() {
       body: JSON.stringify({
         course_id: courseId,
         course_name: courseName,
-        holes: holesPayload
+        holes: holesPayload,
+        tees: teesPayload,
+        selected_tee: selectedTee
       })
     });
 
@@ -2344,7 +2545,7 @@ async function saveCourseSpecs() {
       }
       updateTournamentState(data);
       await fetchCourses();
-      showToast("Course specifications saved successfully!");
+      showSuccessModal("Course Specs Saved", "Course specifications, holes, and tees have been saved successfully!");
     } else if (res.status === 403) {
       showToast("Cannot edit: Round is finished and locked.", "lock");
     } else {
@@ -2818,5 +3019,382 @@ async function deleteSavedRound(rId) {
   } catch (err) {
     console.error("Error deleting round:", err);
     showToast("Network error.", "error");
+  }
+}
+
+// ================= SUCCESS POPUP MODAL =================
+function showSuccessModal(title = "Saved Successfully", msg = "Your changes have been saved.") {
+  const modal = document.getElementById('success-popup-modal');
+  const tEl = document.getElementById('success-popup-title');
+  const mEl = document.getElementById('success-popup-msg');
+  if (tEl) tEl.textContent = title;
+  if (mEl) mEl.textContent = msg;
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeSuccessModal() {
+  const modal = document.getElementById('success-popup-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+// ================= DANGER ZONE: DELETE CURRENT ROUND =================
+function promptDeleteCurrentRound() {
+  const modal = document.getElementById('delete-round-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeDeleteRoundModal() {
+  const modal = document.getElementById('delete-round-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function confirmDeleteCurrentRound() {
+  closeDeleteRoundModal();
+  const rId = state.roundId || (state.tournament ? (state.tournament.round_id || state.tournament.id) : null);
+  if (!rId) {
+    showToast("No active round to delete.", "error");
+    return;
+  }
+  try {
+    const res = await fetch(`/api/round/${rId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast("Round permanently deleted.");
+      window.location.href = '/';
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Cannot delete round.", "error");
+    }
+  } catch (err) {
+    console.error("Error deleting current round:", err);
+    showToast("Network error deleting round.", "error");
+  }
+}
+
+// ================= MY PLAYERS & ROSTER DASHBOARD =================
+let currentStatsPeriod = 'all';
+
+async function openMyPlayersModal() {
+  const modal = document.getElementById('my-players-modal');
+  if (modal) modal.classList.remove('hidden');
+  await fetchAndRenderPlayerStats();
+}
+
+function closeMyPlayersModal() {
+  const modal = document.getElementById('my-players-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function setStatsPeriod(period) {
+  currentStatsPeriod = period;
+  const btnAll = document.getElementById('btn-stats-all');
+  const btnYear = document.getElementById('btn-stats-year');
+  const startInp = document.getElementById('stats-start-date');
+  const endInp = document.getElementById('stats-end-date');
+
+  if (startInp) startInp.value = '';
+  if (endInp) endInp.value = '';
+
+  if (period === 'all') {
+    if (btnAll) btnAll.className = "py-1 px-3 rounded-lg font-black text-xs transition bg-amber-500 text-slate-950 shadow-sm";
+    if (btnYear) btnYear.className = "py-1 px-3 rounded-lg font-black text-xs transition bg-slate-800 text-slate-300 hover:text-white";
+  } else if (period === 'this_year') {
+    if (btnYear) btnYear.className = "py-1 px-3 rounded-lg font-black text-xs transition bg-amber-500 text-slate-950 shadow-sm";
+    if (btnAll) btnAll.className = "py-1 px-3 rounded-lg font-black text-xs transition bg-slate-800 text-slate-300 hover:text-white";
+  }
+  fetchAndRenderPlayerStats();
+}
+
+function setStatsCustomPeriod() {
+  const start = document.getElementById('stats-start-date')?.value;
+  const end = document.getElementById('stats-end-date')?.value;
+  if (start && end) {
+    currentStatsPeriod = 'custom';
+    const btnAll = document.getElementById('btn-stats-all');
+    const btnYear = document.getElementById('btn-stats-year');
+    if (btnAll) btnAll.className = "py-1 px-3 rounded-lg font-black text-xs transition bg-slate-800 text-slate-300 hover:text-white";
+    if (btnYear) btnYear.className = "py-1 px-3 rounded-lg font-black text-xs transition bg-slate-800 text-slate-300 hover:text-white";
+    fetchAndRenderPlayerStats();
+  }
+}
+
+function onStatsCurrencyChanged() {
+  fetchAndRenderPlayerStats();
+}
+
+async function fetchAndRenderPlayerStats() {
+  const tbody = document.getElementById('my-players-tbody');
+  if (!tbody) return;
+
+  const currency = document.getElementById('stats-currency')?.value || 'THB';
+  const start = document.getElementById('stats-start-date')?.value || '';
+  const end = document.getElementById('stats-end-date')?.value || '';
+
+  let url = `/api/players/stats?range=${currentStatsPeriod}&currency=${currency}`;
+  if (currentStatsPeriod === 'custom' && start && end) {
+    url += `&start_date=${start}&end_date=${end}`;
+  }
+
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="7" class="py-8 text-center text-slate-400 text-xs">
+        <div class="inline-block w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin mb-1"></div>
+        <p>Loading player statistics...</p>
+      </td>
+    </tr>
+  `;
+
+  try {
+    const res = await fetch(url);
+    if (res.ok) {
+      const stats = await res.json();
+      renderMyPlayersTable(stats, currency);
+    } else {
+      tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-rose-400 text-xs">Failed to load player stats.</td></tr>`;
+    }
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" class="py-6 text-center text-rose-400 text-xs">Network error loading stats.</td></tr>`;
+  }
+}
+
+function renderMyPlayersTable(stats, currency = 'THB') {
+  const tbody = document.getElementById('my-players-tbody');
+  if (!tbody) return;
+
+  if (!stats || stats.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="py-8 text-center text-slate-400 text-xs">
+          <i data-lucide="users" class="w-7 h-7 mx-auto mb-1.5 text-slate-600"></i>
+          <p class="font-bold">No players in your roster yet.</p>
+          <p class="text-[11px] text-slate-500 mt-0.5">Click "Add Player" to search and add players!</p>
+        </td>
+      </tr>
+    `;
+    initIcons();
+    return;
+  }
+
+  tbody.innerHTML = stats.map(p => {
+    const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ') || '-';
+    const emailStr = p.email || '-';
+    const hcpStr = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '-';
+    const rounds = p.rounds_played || 0;
+    const cash = p.total_cash_won_lost || 0;
+
+    const isPos = cash > 0;
+    const isNeg = cash < 0;
+    const cashClass = isPos ? 'text-emerald-400' : (isNeg ? 'text-rose-400' : 'text-slate-400');
+    const cashPrefix = isPos ? '+' : '';
+    const cashStr = `${cashPrefix}${cash.toLocaleString()} ${currency}`;
+
+    return `
+      <tr class="hover:bg-slate-900/60 transition">
+        <td class="py-2.5 px-3 font-black text-amber-400 text-xs">${p.nickname}</td>
+        <td class="py-2.5 px-3 text-slate-200 text-xs font-bold">${fullName}</td>
+        <td class="py-2.5 px-3 text-slate-400 text-[11px]">${emailStr}</td>
+        <td class="py-2.5 px-3 text-center font-mono font-bold text-white text-xs">${hcpStr}</td>
+        <td class="py-2.5 px-3 text-center text-slate-300 font-mono text-xs">${rounds}</td>
+        <td class="py-2.5 px-3 text-right font-black font-mono text-xs ${cashClass}">${cashStr}</td>
+        <td class="py-2.5 px-2 text-center">
+          <button type="button" onclick="removePlayerFromRoster('${p.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Remove from my roster">
+            <i data-lucide="user-minus" class="w-3.5 h-3.5"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  initIcons();
+}
+
+async function removePlayerFromRoster(playerId) {
+  if (!confirm("Remove this player from your roster?")) return;
+  try {
+    const res = await fetch(`/api/my-players/${playerId}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast("Player removed from roster.");
+      await fetchAndRenderPlayerStats();
+    } else {
+      showToast("Failed to remove player.", "error");
+    }
+  } catch (err) {
+    showToast("Network error removing player.", "error");
+  }
+}
+
+// ================= GLOBAL PLAYERS DIRECTORY & SEARCH =================
+function openAddPlayerModal() {
+  const modal = document.getElementById('add-player-modal');
+  if (modal) modal.classList.remove('hidden');
+  const searchInp = document.getElementById('global-player-search');
+  if (searchInp) {
+    searchInp.value = '';
+    searchInp.focus();
+  }
+  searchGlobalPlayers('');
+}
+
+function closeAddPlayerModal() {
+  const modal = document.getElementById('add-player-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+let globalSearchDebounce = null;
+async function searchGlobalPlayers(q) {
+  if (globalSearchDebounce) clearTimeout(globalSearchDebounce);
+  globalSearchDebounce = setTimeout(async () => {
+    const resultsContainer = document.getElementById('global-players-search-results');
+    if (!resultsContainer) return;
+
+    try {
+      const res = await fetch(`/api/players?q=${encodeURIComponent(q || '')}`);
+      if (res.ok) {
+        const players = await res.json();
+        renderGlobalSearchResults(players);
+      }
+    } catch (err) {
+      console.error("Global search error:", err);
+    }
+  }, 150);
+}
+
+function renderGlobalSearchResults(players) {
+  const container = document.getElementById('global-players-search-results');
+  if (!container) return;
+
+  if (!players || players.length === 0) {
+    container.innerHTML = `
+      <div class="p-6 text-center text-slate-400 text-xs">
+        <p class="font-bold">No players found.</p>
+        <p class="text-[11px] text-slate-500 mt-1">Try another search or click "Create New Player".</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = players.map(p => {
+    const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ');
+    const hcpStr = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '-';
+    return `
+      <div class="p-3 flex items-center justify-between gap-2 hover:bg-slate-800/40 transition">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-black text-amber-400 text-xs">${p.nickname}</span>
+            <span class="text-white text-xs font-bold truncate">${fullName}</span>
+          </div>
+          <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+            ${p.email ? `<span class="truncate">${p.email}</span><span>•</span>` : ''}
+            <span>HCP: <strong class="text-slate-200">${hcpStr}</strong></span>
+          </div>
+        </div>
+        <button type="button" onclick="addPlayerToMyRoster('${p.id}')"
+                class="py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1 shrink-0">
+          <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+          <span>Add</span>
+        </button>
+      </div>
+    `;
+  }).join('');
+  initIcons();
+}
+
+async function addPlayerToMyRoster(playerId) {
+  try {
+    const res = await fetch('/api/my-players', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_id: playerId })
+    });
+    if (res.ok) {
+      showToast("Player added to your roster!");
+      closeAddPlayerModal();
+      await fetchAndRenderPlayerStats();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to add player.", "error");
+    }
+  } catch (err) {
+    showToast("Network error adding player.", "error");
+  }
+}
+
+// ================= CREATE NEW PLAYER =================
+function openCreatePlayerModal() {
+  const modal = document.getElementById('create-player-modal');
+  const warn = document.getElementById('create-player-warn');
+  if (warn) warn.classList.add('hidden');
+  const form = document.getElementById('create-player-form');
+  if (form) form.reset();
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeCreatePlayerModal() {
+  const modal = document.getElementById('create-player-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitCreatePlayer(e) {
+  e.preventDefault();
+  const warn = document.getElementById('create-player-warn');
+  const warnMsg = document.getElementById('create-player-warn-msg');
+  if (warn) warn.classList.add('hidden');
+
+  const nick = document.getElementById('new-player-nick')?.value.trim();
+  const fn = document.getElementById('new-player-fn')?.value.trim();
+  const ln = document.getElementById('new-player-ln')?.value.trim();
+  const hcp = parseFloat(document.getElementById('new-player-hcp')?.value) || 18.0;
+
+  if (!nick || !fn || !ln) {
+    if (warn && warnMsg) {
+      warnMsg.textContent = "Nickname, First Name, and Last Name are all required.";
+      warn.classList.remove('hidden');
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/players', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nickname: nick,
+        first_name: fn,
+        last_name: ln,
+        initial_handicap: hcp
+      })
+    });
+
+    if (res.status === 409) {
+      const err = await res.json().catch(() => ({}));
+      if (warn && warnMsg) {
+        warnMsg.textContent = err.error || "A player with this nickname or name already exists.";
+        warn.classList.remove('hidden');
+      }
+      return;
+    }
+
+    if (res.ok) {
+      const newPlayer = await res.json();
+      showToast(`Player "${newPlayer.nickname}" created!`);
+      closeCreatePlayerModal();
+      // Auto-add to user's roster
+      await fetch('/api/my-players', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_id: newPlayer.id })
+      });
+      closeAddPlayerModal();
+      await fetchAndRenderPlayerStats();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      if (warn && warnMsg) {
+        warnMsg.textContent = err.error || "Failed to create player.";
+        warn.classList.remove('hidden');
+      }
+    }
+  } catch (err) {
+    if (warn && warnMsg) {
+      warnMsg.textContent = "Network error creating player.";
+      warn.classList.remove('hidden');
+    }
   }
 }
