@@ -318,4 +318,28 @@ assert calculate_whs_handicap(base_diffs[:19]) == 16.0 # 19 rounds: avg lowest 7
 assert calculate_whs_handicap(base_diffs[:20]) == 17.0 # 20 rounds: avg lowest 8 = 17.0
 print("PASS: USGA Rule 5.2a Handicap Index calculation verified across all 12 tiers (<3 through 20+)")
 
-print("\nALL 24 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")
+# 25. Verify SQL courses table does not record is_turbo
+c_test = db.create_course("Integration Test Course", [
+    {"hole": 1, "par": 4, "handicap": 1, "is_turbo": True},
+    {"hole": 2, "par": 4, "handicap": 2, "is_turbo": False}
+])
+ret_c = db.get_course(c_test["id"])
+for h in ret_c["holes"]:
+    assert "is_turbo" not in h
+print("PASS: courses table in SQL does not record turbo holes")
+
+# 26. Verify manual turbo hole preservation on round and GET /api/rounds
+r_manual = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
+man_id = r_manual["json"]["round_id"]
+man_holes = [{"hole": i, "par": 4, "handicap": i, "is_turbo": (i in [1, 2])} for i in range(1, 19)]
+r_save = invoke_request("POST", f"/api/round/{man_id}/course", body={"holes": man_holes}, headers=auth_headers)
+saved_turbos = [h["hole"] for h in r_save["json"]["holes"] if h.get("is_turbo")]
+assert saved_turbos == [1, 2]
+r_my = invoke_request("GET", f"/api/rounds?current_round_id={man_id}", headers=auth_headers)
+my_round_ids = [r["id"] for r in r_my["json"]]
+assert man_id in my_round_ids
+found_man = next(r for r in r_my["json"] if r["id"] == man_id)
+assert "round_name" in found_man and found_man["round_name"]
+print("PASS: Manual turbo holes preserved on round and returned in My Rounds list")
+
+print("\nALL 26 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")

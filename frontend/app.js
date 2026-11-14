@@ -3307,7 +3307,9 @@ async function openMyRoundsModal() {
   }
 
   try {
-    const res = await fetch('/api/rounds');
+    const currentRId = state.roundId || (state.tournament ? (state.tournament.round_id || state.tournament.id) : null);
+    const fetchUrl = currentRId ? `/api/rounds?current_round_id=${encodeURIComponent(currentRId)}` : '/api/rounds';
+    const res = await fetch(fetchUrl);
     if (res.ok) {
       const data = await res.json();
       renderMyRoundsList(Array.isArray(data) ? data : (data.rounds || []));
@@ -3346,7 +3348,14 @@ function renderMyRoundsList(rounds) {
     const isCurrent = r.id === currentRId;
     const isFinished = Boolean(r.is_finished);
     const isOwner = Boolean(r.is_owner);
-    const dateStr = r.created_at ? r.created_at.substring(0, 10) : '';
+    
+    let dateStr = '';
+    if (typeof r.created_at === 'number') {
+      dateStr = new Date(r.created_at * 1000).toLocaleDateString();
+    } else if (typeof r.created_at === 'string') {
+      dateStr = r.created_at.substring(0, 10);
+    }
+    const roundTitle = r.round_name || r.name || 'Sunday Golf Match';
     const creator = r.creator_name || r.creator_email || 'Public';
 
     const statusBadge = isFinished
@@ -3358,7 +3367,7 @@ function renderMyRoundsList(rounds) {
         <div class="flex-1 min-w-0 cursor-pointer" onclick="openSavedRound('${r.id}')">
           <div class="flex items-center gap-2 flex-wrap">
             ${!isFinished ? '<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" title="Ongoing"></span>' : ''}
-            <span class="text-sm font-black text-white truncate">${r.round_name || 'Sunday Golf Match'}</span>
+            <span class="text-sm font-black text-white truncate">${roundTitle}</span>
             ${isCurrent ? '<span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">Active</span>' : ''}
             ${statusBadge}
           </div>

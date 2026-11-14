@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Optional
 
 from engine import (
     calculate_tournament_state,
+    compute_wolf_turbo_holes,
     DEFAULT_PLAYERS,
     DEFAULT_HOLES,
     DEFAULT_SETTINGS,
@@ -98,6 +99,11 @@ class RoundManager:
         else:
             round_name = f"{base_name} {len(existing) + 1}"
 
+        # Ensure default turbo flags exist on round holes
+        for h in holes:
+            if "is_turbo" not in h:
+                h["is_turbo"] = (int(h.get("hole", 0)) in (9, 18))
+
         round_data = {
             "name": round_name,
             "course_id": c_id,
@@ -116,6 +122,11 @@ class RoundManager:
         round_data = db.get_round(round_id)
         if not round_data:
             return None
+
+        # Auto-claim round if user is signed in and round has no owner yet
+        if user_id and not round_data.get("owner_id"):
+            db.update_round(round_id, {"owner_id": user_id})
+            round_data["owner_id"] = user_id
 
         state = calculate_tournament_state(round_data)
         state["round_id"] = round_id
@@ -209,6 +220,16 @@ class RoundManager:
                 "game_settings": settings,
                 "starting_hole": starting_hole
             }
+
+            # If WOLF mode with turbo enabled, automatically assign wolf turbo holes upon saving game settings
+            if settings.get("game_mode") == "WOLF" and settings.get("turbo"):
+                players = round_data.get("players") or DEFAULT_PLAYERS
+                holes = round_data.get("holes") or copy.deepcopy(DEFAULT_HOLES)
+                wolf_turbos = compute_wolf_turbo_holes(players, holes, starting_hole)
+                for h in holes:
+                    h["is_turbo"] = (int(h.get("hole", 0)) in wolf_turbos)
+                round_data["holes"] = holes
+                update_fields["holes"] = holes
             if "tournament_name" in new_settings and new_settings["tournament_name"]:
                 round_data["round_name"] = str(new_settings["tournament_name"]).strip()
                 update_fields["round_name"] = round_data["round_name"]
@@ -560,6 +581,12 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             if not user_id:
                 self.send_json_response([])
             else:
+                qs = urllib.parse.parse_qs(parsed.query)
+                curr_rid = qs.get("current_round_id", [None])[0]
+                if curr_rid:
+                    curr_r = db.get_round(curr_rid)
+                    if curr_r and not curr_r.get("owner_id"):
+                        db.update_round(curr_rid, {"owner_id": user_id})
                 rounds = db.list_user_rounds(user_id)
                 self.send_json_response(rounds)
             return

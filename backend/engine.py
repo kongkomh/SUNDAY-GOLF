@@ -174,73 +174,53 @@ def get_played_hole_order(starting_hole: int = 1) -> List[int]:
 
 def compute_wolf_turbo_holes(players: List[Dict[str, Any]], holes: List[Dict[str, Any]], starting_hole: int = 1) -> List[int]:
     """
-    In Wolf mode:
-    Ensure exactly 1 turbo hole for each wolf across the played sequence.
-    Alternates and balances turbo holes between the front 9 and back 9 of the round,
-    preferring non-Par 3 holes in the later portion of each half.
+    Wolf mode turbo hole assignment:
+    - Alternates search between front 9 (starting at 9 downwards) and back 9 (starting at 18 downwards)
+    - Skips Par 3 holes
+    - Ensures each wolf only gets 1 turbo hole
+    - Avoids duplicate turbo holes
     """
     n = len(players)
     if n == 0:
         return [9, 18]
 
-    import itertools
-
-    played_seq = get_played_hole_order(starting_hole)
     hole_par_map = {int(h.get("hole", i + 1)): int(h.get("par", 4)) for i, h in enumerate(holes)}
+    turbo_holes: List[int] = []
+    turbo_wolves: List[str] = []
 
-    front_set = set(played_seq[:9])
-    back_set = set(played_seq[9:])
+    # If starting hole is 10, the front 9 of the round is 10-18 (ends at 18) and back 9 is 1-9 (ends at 9)
+    # If starting hole is 1, the front 9 is 1-9 (ends at 9) and back 9 is 10-18 (ends at 18)
+    first_start, first_min = (18, 10) if starting_hole == 10 else (9, 1)
+    second_start, second_min = (9, 1) if starting_hole == 10 else (18, 10)
 
-    p_wolf_data = []
-    for p_idx in range(n):
-        w_holes = [h for pos, h in enumerate(played_seq) if (pos % n) == p_idx]
-        f_holes = [h for h in w_holes if h in front_set]
-        b_holes = [h for h in w_holes if h in back_set]
+    for count in range(n):
+        if count % 2 == 0:
+            turbo_hole = first_start
+            min_hole = first_min
+        else:
+            turbo_hole = second_start
+            min_hole = second_min
 
-        f_non_par3 = [h for h in f_holes if hole_par_map.get(h, 4) != 3]
-        b_non_par3 = [h for h in b_holes if hole_par_map.get(h, 4) != 3]
+        while turbo_hole >= min_hole and (
+            hole_par_map.get(turbo_hole, 4) == 3 or
+            get_wolf_rotation_for_hole(turbo_hole, players, starting_hole)["wolf"]["id"] in turbo_wolves or
+            turbo_hole in turbo_holes
+        ):
+            turbo_hole -= 1
 
-        p_wolf_data.append({
-            "p_idx": p_idx,
-            "front": f_non_par3 if f_non_par3 else f_holes,
-            "back": b_non_par3 if b_non_par3 else b_holes,
-            "front_is_par3": len(f_non_par3) == 0 and len(f_holes) > 0,
-            "back_is_par3": len(b_non_par3) == 0 and len(b_holes) > 0
-        })
+        # Fallback if all holes in this half are exhausted or par 3
+        if turbo_hole < min_hole:
+            start_search = first_start if count % 2 == 0 else second_start
+            for h in range(start_search, min_hole - 1, -1):
+                w_id = get_wolf_rotation_for_hole(h, players, starting_hole)["wolf"]["id"]
+                if w_id not in turbo_wolves and h not in turbo_holes:
+                    turbo_hole = h
+                    break
 
-    best_assignment = None
-    min_par3_count = 999
-
-    for choice in itertools.product([0, 1], repeat=n):
-        front_count = sum(1 for c in choice if c == 0)
-        back_count = n - front_count
-        if abs(front_count - back_count) > 1:
-            continue
-
-        par3_count = 0
-        for i, c in enumerate(choice):
-            if c == 0 and p_wolf_data[i]["front_is_par3"]:
-                par3_count += 1
-            elif c == 1 and p_wolf_data[i]["back_is_par3"]:
-                par3_count += 1
-
-        if par3_count < min_par3_count:
-            min_par3_count = par3_count
-            best_assignment = choice
-            if par3_count == 0:
-                break
-
-    if not best_assignment:
-        best_assignment = tuple(0 if i % 2 == 0 else 1 for i in range(n))
-
-    turbo_holes = []
-    for i, c in enumerate(best_assignment):
-        candidates = p_wolf_data[i]["front"] if c == 0 else p_wolf_data[i]["back"]
-        if not candidates:
-            candidates = p_wolf_data[i]["back"] if c == 0 else p_wolf_data[i]["front"]
-        if candidates:
-            chosen = max(candidates, key=lambda h: played_seq.index(h))
-            turbo_holes.append(chosen)
+        if turbo_hole >= 1:
+            turbo_holes.append(turbo_hole)
+            w_id = get_wolf_rotation_for_hole(turbo_hole, players, starting_hole)["wolf"]["id"]
+            turbo_wolves.append(w_id)
 
     return sorted(list(set(turbo_holes)))
 
@@ -715,12 +695,6 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
         starting_hole = 1
     settings["starting_hole"] = starting_hole
     played_seq = get_played_hole_order(starting_hole)
-
-    # In WOLF mode with turbo enabled, adjust turbo flags if needed
-    if settings.get("game_mode") == "WOLF" and settings.get("turbo"):
-        wolf_turbos = compute_wolf_turbo_holes(players, holes, starting_hole)
-        for h in holes:
-            h["is_turbo"] = (h["hole"] in wolf_turbos)
 
     # Compute Handicap Allocations for all players
     turbo_handicap = bool(settings.get("turbo_handicap", False))

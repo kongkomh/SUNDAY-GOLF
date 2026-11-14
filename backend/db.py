@@ -324,7 +324,13 @@ class Database:
             slug = "custom-course"
         course_id = f"course-{slug}-{int(time.time())}"
         now = time.time()
-        holes_json = json.dumps(holes)
+        # Clean course holes so SQL courses table never records is_turbo
+        clean_course_holes = [{
+            "hole": int(h.get("hole", i + 1)),
+            "par": int(h.get("par", 4)),
+            "handicap": int(h.get("handicap", 9))
+        } for i, h in enumerate(holes)]
+        holes_json = json.dumps(clean_course_holes)
         tees_json = json.dumps(tees or DEFAULT_TEES)
 
         self.execute(
@@ -335,7 +341,7 @@ class Database:
             "id": course_id,
             "name": course_name,
             "location": location,
-            "holes": holes,
+            "holes": clean_course_holes,
             "tees": tees or DEFAULT_TEES,
             "created_at": now
         }
@@ -348,15 +354,22 @@ class Database:
             new_c = self.create_course(course_name, holes, location="Thailand", tees=tees or DEFAULT_TEES)
             return new_c
 
+        # Clean course holes so SQL courses table never records is_turbo
+        clean_course_holes = [{
+            "hole": int(h.get("hole", i + 1)),
+            "par": int(h.get("par", 4)),
+            "handicap": int(h.get("handicap", 9))
+        } for i, h in enumerate(holes)]
+
         if tees is not None:
             self.execute(
                 "UPDATE courses SET name = ?, holes = ?, tees = ? WHERE id = ?",
-                (course_name, json.dumps(holes), json.dumps(tees), course_id)
+                (course_name, json.dumps(clean_course_holes), json.dumps(tees), course_id)
             )
         else:
             self.execute(
                 "UPDATE courses SET name = ?, holes = ? WHERE id = ?",
-                (course_name, json.dumps(holes), course_id)
+                (course_name, json.dumps(clean_course_holes), course_id)
             )
         return self.get_course(course_id)
 
@@ -467,6 +480,11 @@ class Database:
                         r["selected_tee"] = DEFAULT_TEES[2]
                 r["is_finished"] = bool(r.get("is_finished", 0))
                 r["is_owner"] = is_owner
+                r["round_name"] = r.get("name")
+                if r.get("owner_id"):
+                    u = self.get_user(r["owner_id"])
+                    if u:
+                        r["creator_name"] = u.get("name")
                 user_rounds.append(r)
         return user_rounds
 
