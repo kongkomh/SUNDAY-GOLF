@@ -124,8 +124,13 @@ function showScreen(screenName) {
   const mobileNav = document.querySelector('.mobile-bottom-nav');
   const liveIndicator = document.getElementById('live-indicator');
   const leaderPill = document.getElementById('header-leader-pill');
+  const topMenuWrapper = document.getElementById('top-menu-wrapper');
   const headerTitle = document.getElementById('header-tournament-name');
   const headerCourse = document.getElementById('header-course-name');
+
+  if (topMenuWrapper) {
+    topMenuWrapper.classList.toggle('hidden', screenName === 'welcome');
+  }
 
   if (screenName === 'welcome') {
     if (welcomeScreen) welcomeScreen.classList.remove('hidden');
@@ -2269,8 +2274,35 @@ function selectAutocompletePlayer(idx, player) {
   }
 }
 
-// Close autocomplete dropdowns on outside click
+// Top Left Dropdown Menu Handlers
+function toggleTopMenu(e) {
+  if (e) e.stopPropagation();
+  const menu = document.getElementById('top-dropdown-menu');
+  const btn = document.getElementById('btn-top-menu');
+  if (!menu) return;
+  const isHidden = menu.classList.contains('hidden');
+  if (isHidden) {
+    menu.classList.remove('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    initIcons();
+  } else {
+    menu.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function closeTopMenu() {
+  const menu = document.getElementById('top-dropdown-menu');
+  const btn = document.getElementById('btn-top-menu');
+  if (menu) menu.classList.add('hidden');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// Close dropdowns on outside click
 document.addEventListener('click', (e) => {
+  if (!e.target.closest('#top-menu-wrapper')) {
+    closeTopMenu();
+  }
   if (!e.target.closest('[id^="p-autocomplete-"]') && !e.target.closest('[id^="p-name-"]')) {
     document.querySelectorAll('[id^="p-autocomplete-"]').forEach(el => el.classList.add('hidden'));
   }
@@ -2623,7 +2655,6 @@ function renderCourseTees() {
             <th class="py-1.5 px-2 text-left">Tee Name</th>
             <th class="py-1.5 px-2">Course Rating</th>
             <th class="py-1.5 px-2">Slope Rating</th>
-            <th class="py-1.5 px-2">Active</th>
             <th class="py-1.5 px-2">Action</th>
           </tr>
         </thead>
@@ -2645,9 +2676,6 @@ function renderCourseTees() {
                 <td class="py-2 px-2">
                   <input type="number" id="tee-slope-${tee.id}" value="${tee.slope_rating}" onchange="markCourseModified()"
                          class="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-center text-white font-mono text-xs w-16">
-                </td>
-                <td class="py-2 px-2">
-                  <input type="radio" name="tee-active-radio" value="${tee.id}" ${isSelected ? 'checked' : ''} onchange="onActiveTeeChanged('${tee.id}')" class="w-3.5 h-3.5 accent-amber-500 cursor-pointer">
                 </td>
                 <td class="py-2 px-2">
                   <button type="button" onclick="deleteTeeRow('${tee.id}')" class="p-1 rounded hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete Tee">

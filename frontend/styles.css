@@ -312,20 +312,63 @@ body.theme-fairway {
 .theme-fairway .bg-slate-900\/90,
 .theme-fairway .bg-slate-900\/95,
 .theme-fairway .bg-slate-950\/90,
-.theme-fairway .bg-slate-950\/85,
-.theme-fairway .bg-slate-950\/70 {
+.theme-fairway .bg-slate-950\/85 {
   background-color: #ffffff !important;
   color: #152019 !important;
   border-color: #c4cec5 !important;
 }
 
+/* Light Grey Sub-panels, Settings tiles & Lineup cards */
+.theme-fairway .bg-slate-950\/80,
+.theme-fairway .bg-slate-950\/70,
+.theme-fairway .bg-slate-950\/60,
+.theme-fairway .bg-slate-950\/50,
+.theme-fairway .bg-slate-950\/40,
 .theme-fairway .bg-slate-900\/80,
 .theme-fairway .bg-slate-900\/60,
-.theme-fairway .bg-slate-950\/50,
-.theme-fairway .bg-slate-950\/60 {
+.theme-fairway .bg-slate-900\/40,
+.theme-fairway #tab-settings .bg-slate-950\/80,
+.theme-fairway #tab-settings .bg-slate-950\/90,
+.theme-fairway #tab-settings .bg-slate-950\/70,
+.theme-fairway #tab-settings .bg-slate-950\/60,
+.theme-fairway #tab-settings .bg-slate-950\/50,
+.theme-fairway #tab-settings .bg-slate-950\/40,
+.theme-fairway #tab-settings .bg-slate-950,
+.theme-fairway #tab-settings [id^="cfg-player-card-"] {
   background-color: #edf4e9 !important;
-  border-color: #abbca8 !important;
+  border-color: #c4cec5 !important;
   color: #152019 !important;
+}
+
+/* Inactive button toggles inside settings (e.g. Free-For-All, Wolf, Hole 10) */
+.theme-fairway #tab-settings button.bg-slate-900,
+.theme-fairway #tab-settings button.bg-slate-950 {
+  background-color: #edf4e9 !important;
+  border-color: #c4cec5 !important;
+  color: #34483a !important;
+}
+.theme-fairway #tab-settings button.bg-slate-900:hover,
+.theme-fairway #tab-settings button.bg-slate-950:hover {
+  background-color: #e2ede0 !important;
+  color: #16452e !important;
+}
+
+/* Danger zone soft red in Fairway light mode */
+.theme-fairway .bg-rose-950\/40 {
+  background-color: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+  color: #991b1b !important;
+}
+.theme-fairway .bg-rose-950\/40:hover {
+  background-color: #fecaca !important;
+  color: #7f1d1d !important;
+}
+
+/* Top dropdown menu in light mode */
+.theme-fairway #top-dropdown-menu {
+  background-color: #ffffff !important;
+  border-color: #c4cec5 !important;
+  box-shadow: 0 10px 25px rgba(22, 69, 46, 0.12) !important;
 }
 
 /* Fairway Sage Buttons & Controls (mapped from dark bg-slate-800) */

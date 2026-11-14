@@ -342,6 +342,12 @@ class Database:
 
     def update_course(self, course_id: str, course_name: str, holes: List[Dict[str, Any]], tees: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
         now = time.time()
+        existing = self.get_course(course_id)
+        if not existing:
+            # Course does not exist in courses table yet; create/insert it
+            new_c = self.create_course(course_name, holes, location="Thailand", tees=tees or DEFAULT_TEES)
+            return new_c
+
         if tees is not None:
             self.execute(
                 "UPDATE courses SET name = ?, holes = ?, tees = ? WHERE id = ?",
