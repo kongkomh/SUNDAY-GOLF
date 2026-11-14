@@ -79,33 +79,13 @@ class RoundManager:
         c_id = selected_course["id"] if selected_course else "course-krungthep-kreetha"
         holes = copy.deepcopy(selected_course.get("holes") or DEFAULT_HOLES) if selected_course else copy.deepcopy(DEFAULT_HOLES)
 
-        # Auto-name format: YYYY-MM-DD [Course Name] - [Creator First Name] [Suffix]
-        now = time.time()
-        date_str = time.strftime("%Y-%m-%d", time.localtime(now))
-        creator_first = "Guest"
-        if owner_id:
-            user = db.get_user(owner_id)
-            if user:
-                parts = (user.get("name") or "").strip().split()
-                creator_first = parts[0] if parts else "Golfer"
-                p_rec = db.find_player_by_user_id(owner_id)
-                if p_rec and p_rec.get("first_name"):
-                    creator_first = p_rec["first_name"]
-
-        base_name = f"{date_str} {c_name} - {creator_first}"
-        existing = db.find_rounds_by_name_prefix(base_name)
-        if not existing:
-            round_name = base_name
-        else:
-            round_name = f"{base_name} {len(existing) + 1}"
-
         # Ensure default turbo flags exist on round holes
         for h in holes:
             if "is_turbo" not in h:
                 h["is_turbo"] = (int(h.get("hole", 0)) in (9, 18))
 
         round_data = {
-            "name": round_name,
+            "name": "",
             "course_id": c_id,
             "course_name": c_name,
             "starting_hole": 1,
@@ -128,10 +108,28 @@ class RoundManager:
             db.update_round(round_id, {"owner_id": user_id})
             round_data["owner_id"] = user_id
 
+        # Generate dynamic round name [Date] • [Course] - By [Creator]
+        now_ts = round_data.get("created_at") or time.time()
+        date_str = time.strftime("%Y-%m-%d", time.localtime(now_ts))
+        creator_first = "Guest"
+        if round_data.get("owner_id"):
+            user = db.get_user(round_data["owner_id"])
+            if user:
+                parts = (user.get("name") or "").strip().split()
+                creator_first = parts[0] if parts else "Golfer"
+                p_rec = db.find_player_by_user_id(round_data["owner_id"])
+                if p_rec and p_rec.get("first_name"):
+                    creator_first = p_rec["first_name"]
+
+        c_name = round_data.get("course_name") or "Golf Course"
+        dynamic_round_title = f"{date_str} • {c_name} - By {creator_first}"
+
         state = calculate_tournament_state(round_data)
         state["round_id"] = round_id
         state["id"] = round_id
-        state["round_name"] = round_data.get("name")
+        state["round_name"] = dynamic_round_title
+        state["date_str"] = date_str
+        state["creator_name"] = creator_first
         state["owner_id"] = round_data.get("owner_id")
         state["is_finished"] = bool(round_data.get("is_finished", False))
         state["is_owner"] = bool(user_id and round_data.get("owner_id") and user_id == round_data.get("owner_id"))
@@ -221,6 +219,37 @@ class RoundManager:
                 "starting_hole": starting_hole
             }
 
+            # Support course and tee update when saving game settings
+            if "course_id" in merged_settings and merged_settings["course_id"]:
+                new_cid = str(merged_settings["course_id"])
+                if new_cid != round_data.get("course_id"):
+                    new_course = db.get_course(new_cid)
+                    if new_course:
+                        round_data["course_id"] = new_course["id"]
+                        round_data["course_name"] = new_course["name"]
+                        tees = new_course.get("tees") or DEFAULT_TEES
+                        sel_tee_in = merged_settings.get("selected_tee")
+                        if isinstance(sel_tee_in, dict) and sel_tee_in.get("id"):
+                            round_data["selected_tee"] = sel_tee_in
+                        elif isinstance(sel_tee_in, str):
+                            round_data["selected_tee"] = next((t for t in tees if t["id"] == sel_tee_in), tees[0])
+                        else:
+                            round_data["selected_tee"] = tees[2] if len(tees) > 2 else tees[0]
+
+                        # Set course holes
+                        new_holes = copy.deepcopy(new_course.get("holes") or DEFAULT_HOLES)
+                        for h in new_holes:
+                            if "is_turbo" not in h:
+                                h["is_turbo"] = (int(h.get("hole", 0)) in (9, 18))
+                        round_data["holes"] = new_holes
+                        update_fields["course_id"] = round_data["course_id"]
+                        update_fields["course_name"] = round_data["course_name"]
+                        update_fields["selected_tee"] = round_data["selected_tee"]
+                        update_fields["holes"] = new_holes
+            elif "selected_tee" in merged_settings and merged_settings["selected_tee"]:
+                round_data["selected_tee"] = merged_settings["selected_tee"]
+                update_fields["selected_tee"] = round_data["selected_tee"]
+
             # If WOLF mode with turbo enabled, automatically assign wolf turbo holes upon saving game settings
             if settings.get("game_mode") == "WOLF" and settings.get("turbo"):
                 players = round_data.get("players") or DEFAULT_PLAYERS
@@ -230,9 +259,6 @@ class RoundManager:
                     h["is_turbo"] = (int(h.get("hole", 0)) in wolf_turbos)
                 round_data["holes"] = holes
                 update_fields["holes"] = holes
-            if "tournament_name" in new_settings and new_settings["tournament_name"]:
-                round_data["round_name"] = str(new_settings["tournament_name"]).strip()
-                update_fields["round_name"] = round_data["round_name"]
 
             db.update_round(round_id, update_fields)
             state = self.get_round_state(round_id, user_id)
@@ -548,7 +574,14 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_json_response(courses)
             return
 
-        # 4. Players Directory & Search API
+        # 4a. Player Past Rounds History API
+        if path.startswith("/api/players/") and path.endswith("/history"):
+            ply_id = path.replace("/api/players/", "").replace("/history", "").strip("/")
+            history = db.get_player_rounds_history(ply_id)
+            self.send_json_response(history)
+            return
+
+        # 4b. Players Directory & Search API
         if path == "/api/players":
             params = urllib.parse.parse_qs(parsed.query)
             q = params.get("q", [None])[0]

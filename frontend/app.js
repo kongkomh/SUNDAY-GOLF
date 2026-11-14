@@ -514,8 +514,15 @@ function renderHeader() {
 
   const nameEl = document.getElementById('header-tournament-name');
   if (nameEl) {
+    let titleStr = t.round_name;
+    if (!titleStr) {
+      const datePart = t.date_str || new Date().toLocaleDateString();
+      const coursePart = t.course_name || 'Golf Course';
+      const creatorPart = t.creator_name || 'Organizer';
+      titleStr = `${datePart} • ${coursePart} - By ${creatorPart}`;
+    }
     nameEl.innerHTML = `
-      <span class="truncate">${t.round_name || t.tournament_name || 'Sunday Golf Match'}</span>
+      <span class="truncate">${titleStr}</span>
       <span id="header-mode-badge" class="px-1.5 py-0.5 rounded text-[10px] font-black ${modeBadgeClass}">
         ${modeBadgeText}
       </span>
@@ -524,7 +531,8 @@ function renderHeader() {
 
   const courseEl = document.getElementById('header-course-name');
   if (courseEl) {
-    courseEl.textContent = t.course_name || 'Krungthep Kreetha';
+    const teeName = typeof t.selected_tee === 'object' ? (t.selected_tee?.name || 'White') : (t.selected_tee || 'White');
+    courseEl.textContent = `${t.course_name || 'Golf Course'} • ${teeName} Tee`;
   }
 
   // Round State Action Status (LOCKED / Unlock Round when finished; Finish Round moved to last hole)
@@ -2360,7 +2368,8 @@ async function savePlayersLineup() {
 }
 
 async function saveGameSettings() {
-  const title = document.getElementById('cfg-tourn-title')?.value.trim() || 'Sunday Golf Match';
+  const courseId = document.getElementById('course-selector')?.value || state.tournament?.course_id || 'course-krungthep-kreetha';
+  const selectedTee = document.getElementById('active-tee-selector')?.value || state.tournament?.selected_tee || 'White';
   const isWolf = document.getElementById('btn-mode-wolf')?.classList.contains('bg-purple-600');
   const isFFA = document.getElementById('btn-mode-ffa')?.classList.contains('bg-emerald-500');
   let gameMode = 'TEAMS';
@@ -2388,7 +2397,8 @@ async function saveGameSettings() {
   });
 
   const payload = {
-    tournament_name: title,
+    course_id: courseId,
+    selected_tee: selectedTee,
     starting_hole: startingHole,
     game_settings: {
       game_mode: gameMode,
@@ -3297,13 +3307,17 @@ async function openMyRoundsModal() {
   const modal = document.getElementById('my-rounds-modal');
   if (modal) modal.classList.remove('hidden');
 
-  const listEl = document.getElementById('my-rounds-list');
-  if (listEl) {
-    listEl.innerHTML = `
-      <div class="p-8 text-center text-slate-400 text-xs">
-        <div class="inline-block w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-2"></div>
-        <p>Loading rounds...</p>
-      </div>
+  const tbody = document.getElementById('my-rounds-tbody');
+  const emptyEl = document.getElementById('my-rounds-empty');
+  if (emptyEl) emptyEl.classList.add('hidden');
+  if (tbody) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="p-8 text-center text-slate-400 text-xs">
+          <div class="inline-block w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-2"></div>
+          <p>Loading rounds...</p>
+        </td>
+      </tr>
     `;
   }
 
@@ -3315,10 +3329,10 @@ async function openMyRoundsModal() {
       const data = await res.json();
       renderMyRoundsList(Array.isArray(data) ? data : (data.rounds || []));
     } else {
-      if (listEl) listEl.innerHTML = `<div class="p-6 text-center text-rose-400 text-xs">Failed to load rounds.</div>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-rose-400 text-xs">Failed to load rounds.</td></tr>`;
     }
   } catch (err) {
-    if (listEl) listEl.innerHTML = `<div class="p-6 text-center text-rose-400 text-xs">Network error loading rounds.</div>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-rose-400 text-xs">Network error loading rounds.</td></tr>`;
   }
 }
 
@@ -3328,70 +3342,70 @@ function closeMyRoundsModal() {
 }
 
 function renderMyRoundsList(rounds) {
-  const listEl = document.getElementById('my-rounds-list');
-  if (!listEl) return;
+  const tbody = document.getElementById('my-rounds-tbody');
+  const emptyEl = document.getElementById('my-rounds-empty');
+  if (!tbody) return;
 
   if (!rounds || rounds.length === 0) {
-    listEl.innerHTML = `
-      <div class="p-8 text-center text-slate-400 text-xs">
-        <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-600"></i>
-        <p class="font-bold">No saved rounds found.</p>
-        <p class="text-[11px] text-slate-500 mt-1">Start a round and it will appear here!</p>
-      </div>
-    `;
+    tbody.innerHTML = '';
+    if (emptyEl) emptyEl.classList.remove('hidden');
     initIcons();
     return;
   }
 
+  if (emptyEl) emptyEl.classList.add('hidden');
+
   const currentRId = state.roundId || (state.tournament ? (state.tournament.round_id || state.tournament.id) : null);
 
-  listEl.innerHTML = rounds.map(r => {
+  tbody.innerHTML = rounds.map(r => {
     const isCurrent = r.id === currentRId;
     const isFinished = Boolean(r.is_finished);
     const isOwner = Boolean(r.is_owner);
-    
-    let dateStr = '';
-    if (typeof r.created_at === 'number') {
-      dateStr = new Date(r.created_at * 1000).toLocaleDateString();
-    } else if (typeof r.created_at === 'string') {
-      dateStr = r.created_at.substring(0, 10);
-    }
-    const roundTitle = r.round_name || r.name || 'Sunday Golf Match';
-    const creator = r.creator_name || r.creator_email || 'Public';
 
-    const statusBadge = isFinished
-      ? `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700 shrink-0">Finished</span>`
-      : `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shrink-0"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>ONGOING</span>`;
+    let dateStr = r.date_str || '';
+    if (!dateStr) {
+      if (typeof r.created_at === 'number') {
+        dateStr = new Date(r.created_at * 1000).toLocaleDateString();
+      } else if (typeof r.created_at === 'string') {
+        dateStr = r.created_at.substring(0, 10);
+      }
+    }
+
+    const courseTitle = r.course_name || 'Golf Course';
+    const creator = r.creator_name || r.creator_email || 'Public';
+    const playersList = Array.isArray(r.player_names) && r.player_names.length > 0 
+      ? r.player_names.join(', ') 
+      : 'None';
+
+    let statusBadge = '';
+    if (isCurrent) {
+      statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 uppercase shadow-sm">Active</span>`;
+    } else if (isFinished) {
+      statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">Finished</span>`;
+    } else {
+      statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>Ongoing</span>`;
+    }
 
     return `
-      <div class="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-800/50 transition ${isCurrent ? 'bg-amber-500/10 border-l-4 border-amber-500' : ''}">
-        <div class="flex-1 min-w-0 cursor-pointer" onclick="openSavedRound('${r.id}')">
-          <div class="flex items-center gap-2 flex-wrap">
-            ${!isFinished ? '<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shrink-0" title="Ongoing"></span>' : ''}
-            <span class="text-sm font-black text-white truncate">${roundTitle}</span>
-            ${isCurrent ? '<span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-500 text-slate-950">Active</span>' : ''}
-            ${statusBadge}
-          </div>
-          <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
-            <span>${r.course_name || 'Golf Course'}</span>
-            <span>•</span>
-            <span>${dateStr}</span>
-            <span>•</span>
-            <span class="truncate">By ${creator}</span>
-          </div>
-        </div>
-
-        <div class="flex items-center gap-1.5 shrink-0">
-          <button type="button" onclick="openSavedRound('${r.id}')" class="py-1 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs transition border border-slate-700 flex items-center gap-1">
-            <span>Open</span>
-          </button>
-          ${isOwner ? `
-            <button type="button" onclick="deleteSavedRound('${r.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round">
-              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+      <tr class="hover:bg-slate-800/40 transition cursor-pointer ${isCurrent ? 'bg-amber-500/10' : ''}" onclick="openSavedRound('${r.id}')">
+        <td class="py-2.5 px-3 whitespace-nowrap">${statusBadge}</td>
+        <td class="py-2.5 px-3 text-slate-300 font-mono text-xs whitespace-nowrap">${dateStr}</td>
+        <td class="py-2.5 px-3 font-black text-white text-xs">${courseTitle}</td>
+        <td class="py-2.5 px-3 text-slate-300 font-bold text-xs whitespace-nowrap">${creator}</td>
+        <td class="py-2.5 px-3 text-slate-400 text-xs">${playersList}</td>
+        <td class="py-2.5 px-3 text-center whitespace-nowrap" onclick="event.stopPropagation()">
+          <div class="flex items-center justify-center gap-1.5">
+            <button type="button" onclick="openSavedRound('${r.id}')" class="py-1 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold text-xs transition border border-slate-700 shadow-sm">
+              Open
             </button>
-          ` : ''}
-        </div>
-      </div>
+            ${isOwner ? `
+              <button type="button" onclick="deleteSavedRound('${r.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            ` : ''}
+          </div>
+        </td>
+      </tr>
     `;
   }).join('');
   initIcons();
@@ -3745,13 +3759,16 @@ function renderMyPlayersTable(stats, currency = 'THB') {
   const tbody = document.getElementById('my-players-tbody');
   if (!tbody) return;
 
+  state.myRosterPlayerIds = new Set((stats || []).map(p => p.id));
+  if (state.currentPlayer?.id) state.myRosterPlayerIds.add(state.currentPlayer.id);
+
   if (!stats || stats.length === 0) {
     tbody.innerHTML = `
       <tr>
         <td colspan="7" class="py-8 text-center text-slate-400 text-xs">
           <i data-lucide="users" class="w-7 h-7 mx-auto mb-1.5 text-slate-600"></i>
           <p class="font-bold">No players in your roster yet.</p>
-          <p class="text-[11px] text-slate-500 mt-0.5">Click "Add Player" to search and add players!</p>
+          <p class="text-[11px] text-slate-500 mt-0.5">Click "Add Friends" to search and add friends!</p>
         </td>
       </tr>
     `;
@@ -3771,16 +3788,19 @@ function renderMyPlayersTable(stats, currency = 'THB') {
     const cashClass = isPos ? 'text-emerald-400' : (isNeg ? 'text-rose-400' : 'text-slate-400');
     const cashPrefix = isPos ? '+' : '';
     const cashStr = `${cashPrefix}${cash.toLocaleString()} ${currency}`;
+    const safeNick = (p.nickname || '').replace(/'/g, "\\'");
 
     return `
-      <tr class="hover:bg-slate-900/60 transition">
-        <td class="py-2.5 px-3 font-black text-amber-400 text-xs">${p.nickname}</td>
+      <tr class="hover:bg-slate-800/60 transition cursor-pointer" onclick="openPlayerHistoryModal('${p.id}', '${safeNick}')" title="Click to view past round history">
+        <td class="py-2.5 px-3 font-black text-amber-400 text-xs">
+          <span class="hover:underline underline-offset-2">${p.nickname}</span>
+        </td>
         <td class="py-2.5 px-3 text-slate-200 text-xs font-bold">${fullName}</td>
         <td class="py-2.5 px-3 text-slate-400 text-[11px]">${emailStr}</td>
         <td class="py-2.5 px-3 text-center font-mono font-bold text-white text-xs">${hcpStr}</td>
         <td class="py-2.5 px-3 text-center text-slate-300 font-mono text-xs">${rounds}</td>
         <td class="py-2.5 px-3 text-right font-black font-mono text-xs ${cashClass}">${cashStr}</td>
-        <td class="py-2.5 px-2 text-center">
+        <td class="py-2.5 px-2 text-center" onclick="event.stopPropagation()">
           <button type="button" onclick="removePlayerFromRoster('${p.id}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Remove from my roster">
             <i data-lucide="user-minus" class="w-3.5 h-3.5"></i>
           </button>
@@ -3797,6 +3817,7 @@ async function removePlayerFromRoster(playerId) {
     const res = await fetch(`/api/my-players/${playerId}`, { method: 'DELETE' });
     if (res.ok) {
       showToast("Player removed from roster.");
+      if (state.myRosterPlayerIds) state.myRosterPlayerIds.delete(playerId);
       await fetchAndRenderPlayerStats();
     } else {
       showToast("Failed to remove player.", "error");
@@ -3859,6 +3880,8 @@ function renderGlobalSearchResults(players) {
   container.innerHTML = players.map(p => {
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ');
     const hcpStr = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '-';
+    const isAdded = Boolean(state.myRosterPlayerIds && state.myRosterPlayerIds.has(p.id));
+
     return `
       <div class="p-3 flex items-center justify-between gap-2 hover:bg-slate-800/40 transition">
         <div class="min-w-0">
@@ -3871,11 +3894,18 @@ function renderGlobalSearchResults(players) {
             <span>HCP: <strong class="text-slate-200">${hcpStr}</strong></span>
           </div>
         </div>
-        <button type="button" onclick="addPlayerToMyRoster('${p.id}')"
-                class="py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1 shrink-0">
-          <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-          <span>Add</span>
-        </button>
+        ${isAdded ? `
+          <span class="py-1 px-2.5 rounded-lg bg-slate-800 text-slate-400 font-bold text-xs flex items-center gap-1 shrink-0 border border-slate-700 shadow-inner">
+            <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span>Added</span>
+          </span>
+        ` : `
+          <button type="button" onclick="addPlayerToMyRoster('${p.id}')"
+                  class="py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1 shrink-0 shadow">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>Add Friend</span>
+          </button>
+        `}
       </div>
     `;
   }).join('');
@@ -3890,9 +3920,12 @@ async function addPlayerToMyRoster(playerId) {
       body: JSON.stringify({ player_id: playerId })
     });
     if (res.ok) {
-      showToast("Player added to your roster!");
-      closeAddPlayerModal();
+      showToast("Friend added to your roster!");
+      if (!state.myRosterPlayerIds) state.myRosterPlayerIds = new Set();
+      state.myRosterPlayerIds.add(playerId);
       await fetchAndRenderPlayerStats();
+      const searchInp = document.getElementById('global-player-search');
+      searchGlobalPlayers(searchInp ? searchInp.value : '');
     } else {
       const err = await res.json().catch(() => ({}));
       showToast(err.error || "Failed to add player.", "error");
@@ -3900,6 +3933,102 @@ async function addPlayerToMyRoster(playerId) {
   } catch (err) {
     showToast("Network error adding player.", "error");
   }
+}
+
+// ================= PLAYER PAST ROUND HISTORY MODAL =================
+async function openPlayerHistoryModal(playerId, nickname) {
+  const modal = document.getElementById('player-history-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+
+  const titleEl = document.getElementById('player-history-title');
+  if (titleEl) titleEl.textContent = `${nickname || 'Player'}'s Past Rounds`;
+
+  const tbody = document.getElementById('player-history-tbody');
+  const emptyEl = document.getElementById('player-history-empty');
+  const loadingEl = document.getElementById('player-history-loading');
+
+  if (tbody) tbody.innerHTML = '';
+  if (emptyEl) emptyEl.classList.add('hidden');
+  if (loadingEl) loadingEl.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`/api/players/${encodeURIComponent(playerId)}/history`);
+    if (loadingEl) loadingEl.classList.add('hidden');
+
+    if (res.ok) {
+      const history = await res.json();
+      if (!history || history.length === 0) {
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        return;
+      }
+
+      if (tbody) {
+        tbody.innerHTML = history.map(item => {
+          let dateStr = item.round_date || '';
+          const rawScore = (item.gross_score && item.gross_score > 0) ? item.gross_score : '-';
+          const diffVal = (item.differential != null) ? Number(item.differential).toFixed(1) : '-';
+          const isCounting = Boolean(item.is_counting);
+          
+          let diffHtml = '';
+          if (isCounting) {
+            diffHtml = `
+              <div class="inline-flex items-center justify-center gap-1 font-mono font-black text-emerald-400">
+                <span>${diffVal}</span>
+                <span class="text-[9px] bg-emerald-500/20 text-emerald-300 px-1 py-0.2 rounded border border-emerald-500/30" title="Differential used for WHS Handicap Index">★</span>
+              </div>
+            `;
+          } else {
+            diffHtml = `<span class="font-mono text-slate-300 text-xs">${diffVal}</span>`;
+          }
+
+          const cash = item.cash_won || 0;
+          const curr = item.currency || 'THB';
+          let cashHtml = '';
+          if (cash > 0) {
+            cashHtml = `<span class="font-mono font-black text-emerald-400 text-xs">+${cash.toLocaleString()} ${curr}</span>`;
+          } else if (cash < 0) {
+            cashHtml = `<span class="font-mono font-black text-rose-400 text-xs">${cash.toLocaleString()} ${curr}</span>`;
+          } else {
+            cashHtml = `<span class="font-mono text-slate-400 text-xs">0 ${curr}</span>`;
+          }
+
+          return `
+            <tr class="hover:bg-slate-900/40 transition">
+              <td class="py-2.5 px-3 text-slate-300 font-mono text-xs whitespace-nowrap">${dateStr}</td>
+              <td class="py-2.5 px-3 font-bold text-white text-xs">${item.course_name || 'Golf Course'}</td>
+              <td class="py-2.5 px-3 text-center font-mono font-bold text-slate-200 text-xs">${rawScore}</td>
+              <td class="py-2.5 px-3 text-center text-xs">${diffHtml}</td>
+              <td class="py-2.5 px-3 text-right text-xs whitespace-nowrap">${cashHtml}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+    } else {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-400 text-xs">Failed to load round history.</td></tr>`;
+    }
+  } catch (err) {
+    if (loadingEl) loadingEl.classList.add('hidden');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-400 text-xs">Network error loading round history.</td></tr>`;
+  }
+  initIcons();
+}
+
+function closePlayerHistoryModal() {
+  const modal = document.getElementById('player-history-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+// ================= WHS HANDICAP DETERMINATION MODAL =================
+function openHandicapInfoModal() {
+  const modal = document.getElementById('handicap-info-modal');
+  if (modal) modal.classList.remove('hidden');
+  initIcons();
+}
+
+function closeHandicapInfoModal() {
+  const modal = document.getElementById('handicap-info-modal');
+  if (modal) modal.classList.add('hidden');
 }
 
 // ================= CREATE NEW PLAYER =================

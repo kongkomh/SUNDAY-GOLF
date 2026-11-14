@@ -250,22 +250,13 @@ after_ids = [p["id"] for p in r_after["json"]]
 assert tiger_id not in after_ids
 print("PASS: Removed player from user roster")
 
-# 21. Verify Round Auto-Naming and Duplicate Sequence Numbering
-r_first = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
-assert r_first["status"] == 200
-first_name = r_first["json"]["round_name"]
-assert "Krungthep Kreetha Golf Course" in first_name
-assert "Demo" in first_name or "Golfer" in first_name
-
-r_second = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
-assert r_second["status"] == 200
-second_name = r_second["json"]["round_name"]
-
-# Verify sequence increments
-first_num = 1 if not first_name.split()[-1].isdigit() else int(first_name.split()[-1])
-second_num = int(second_name.split()[-1])
-assert second_num == first_num + 1
-print(f"PASS: Round auto-naming and duplicate sequence verified: '{first_name}' (seq {first_num}) -> '{second_name}' (seq {second_num})")
+# 21. Verify Dynamic Round Identity: [Date] • [Course] - By [Creator]
+r_dynamic = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
+assert r_dynamic["status"] == 200
+dyn_name = r_dynamic["json"]["round_name"]
+assert "Krungthep Kreetha Golf Course" in dyn_name
+assert "Demo" in dyn_name or "Golfer" in dyn_name
+print(f"PASS: Dynamic round identity verified: '{dyn_name}'")
 
 # 22. Verify Link Player Overwrites First/Last Name with Google Info
 # Create an unlinked player first
@@ -342,4 +333,27 @@ found_man = next(r for r in r_my["json"] if r["id"] == man_id)
 assert "round_name" in found_man and found_man["round_name"]
 print("PASS: Manual turbo holes preserved on round and returned in My Rounds list")
 
-print("\nALL 26 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")
+# 27. Verify Player Round History & WHS Counting Flags
+# Insert test history rows for alice_id
+for i in range(1, 6):
+    db.execute(
+        """
+        INSERT OR REPLACE INTO player_round_history 
+        (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, course_name, cash_won, currency, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (f"test-hist-{alice_id}-{i}", alice_id, f"test-round-{i}", f"2026-11-0{i}", 80 + i, 72.0, 113.0, 10.0 + i, "Krungthep Kreetha", 500.0 if i % 2 == 1 else -300.0, "THB", 1794671000 + i)
+    )
+r_hist = invoke_request("GET", f"/api/players/{alice_id}/history", headers=auth_headers)
+assert r_hist["status"] == 200
+hist_list = r_hist["json"]
+assert len(hist_list) == 5
+# Lowest differential (11.0) must be counting per Rule 5.2a (for 5 scores, lowest 1 used)
+counting_items = [h for h in hist_list if h.get("is_counting")]
+assert len(counting_items) == 1
+assert counting_items[0]["differential"] == 11.0
+assert hist_list[0]["course_name"] == "Krungthep Kreetha"
+assert "cash_won" in hist_list[0]
+print(f"PASS: Player history API returns past rounds with counting flags and cash: {len(hist_list)} rounds, counting: {counting_items[0]['differential']}")
+
+print("\nALL 27 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")

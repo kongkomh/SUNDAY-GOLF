@@ -582,6 +582,25 @@
             </div>
           </div>
 
+          <!-- Course & Playing Tee Selector (Moved to Game Settings) -->
+          <div class="sm:col-span-2 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Course & Playing Tee</label>
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2.5">
+              <div class="flex items-center gap-2 flex-1 min-w-0 w-full">
+                <label class="text-xs font-bold text-slate-400 shrink-0">Course:</label>
+                <select id="course-selector" onchange="onCourseSelected(this.value)" class="flex-1 w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-black truncate focus:border-amber-500 focus:outline-none shadow-inner">
+                  <!-- Dynamically populated from courses -->
+                </select>
+              </div>
+              <div class="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                <label class="text-xs font-bold text-slate-400 shrink-0">Tee:</label>
+                <select id="active-tee-selector" onchange="onActiveTeeChanged(this.value)" class="flex-1 sm:flex-none bg-slate-900 border border-amber-500/80 rounded-xl px-2.5 py-2 text-xs text-amber-400 font-black focus:border-amber-400 focus:outline-none">
+                  <!-- Populated dynamically with course tees -->
+                </select>
+              </div>
+            </div>
+          </div>
+
           <!-- Starting Hole Selector (Hole 1 vs Hole 10) -->
           <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
             <label class="block text-xs font-black text-amber-400 uppercase tracking-wider">Starting Hole</label>
@@ -708,13 +727,9 @@
 
         </div>
 
-        <!-- Tournament Title Input & Save Settings Button -->
-        <div class="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div class="flex-1 w-full">
-            <label class="block text-xs font-bold text-slate-400 mb-1">Game / Tournament Title</label>
-            <input id="cfg-tourn-title" type="text" value="Sunday Golf Match" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs">
-          </div>
-          <button onclick="saveGameSettings()" class="py-2.5 px-5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-md shrink-0 flex items-center gap-1.5">
+        <!-- Save Settings Button -->
+        <div class="flex items-center justify-end pt-1">
+          <button onclick="saveGameSettings()" class="w-full sm:w-auto py-2.5 px-6 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-md flex items-center justify-center gap-1.5">
             <i data-lucide="check" class="w-3.5 h-3.5"></i>
             <span>Save Game Settings</span>
           </button>
@@ -728,25 +743,9 @@
         <div class="pb-2 border-b border-slate-800">
           <h3 class="text-sm sm:text-base font-extrabold text-white flex items-center gap-2">
             <i data-lucide="flag" class="w-4 h-4 text-emerald-400"></i>
-            <span>Course Setup & Hole Pars (1–18)</span>
+            <span>Course Setup & Master Hole Pars (1–18)</span>
           </h3>
-          <p class="text-xs text-slate-400 mt-0.5">Select a course, active playing tee, or customize pars and slope ratings.</p>
-        </div>
-
-        <!-- Pre-loaded Course Selector & Active Tee Selector -->
-        <div class="flex flex-col sm:flex-row sm:items-center gap-2.5 pt-0.5">
-          <div class="flex items-center gap-2 flex-1 min-w-0 w-full">
-            <label class="text-xs font-bold text-slate-400 shrink-0">Course:</label>
-            <select id="course-selector" onchange="onCourseSelected(this.value)" class="flex-1 w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-black truncate focus:border-amber-500 focus:outline-none shadow-inner">
-              <!-- Dynamically populated from courses.json -->
-            </select>
-          </div>
-          <div class="flex items-center gap-2 shrink-0 w-full sm:w-auto">
-            <label class="text-xs font-bold text-slate-400 shrink-0">Tee:</label>
-            <select id="active-tee-selector" onchange="onActiveTeeChanged(this.value)" class="flex-1 sm:flex-none bg-slate-950 border border-amber-500/80 rounded-xl px-2.5 py-1.5 text-xs text-amber-400 font-black focus:border-amber-400 focus:outline-none">
-              <!-- Populated dynamically with course tees -->
-            </select>
-          </div>
+          <p class="text-xs text-slate-400 mt-0.5">Customize pars, stroke indexes, or add/edit courses in the master directory.</p>
         </div>
 
         <!-- Course Name Box -->
@@ -927,8 +926,8 @@
   </div>
 
   <!-- 3. My Saved Rounds Modal -->
-  <div id="my-rounds-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 hidden">
-    <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+  <div id="my-rounds-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
       <div class="p-4 border-b border-slate-800 flex items-center justify-between">
         <div class="flex items-center gap-2">
           <i data-lucide="folder" class="w-5 h-5 text-amber-400"></i>
@@ -945,8 +944,27 @@
           <span>New Round</span>
         </button>
       </div>
-      <div id="my-rounds-list" class="p-4 overflow-y-auto space-y-2.5 flex-1 divide-y divide-slate-800/50">
-        <!-- Dynamically rendered -->
+      <div class="overflow-x-auto p-2 sm:p-4 flex-1">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-950/80 text-slate-400 text-[10px] font-black uppercase tracking-wider border-b border-slate-800">
+              <th class="py-2.5 px-3">Status</th>
+              <th class="py-2.5 px-3">Date</th>
+              <th class="py-2.5 px-3">Course</th>
+              <th class="py-2.5 px-3">Created By</th>
+              <th class="py-2.5 px-3">Players</th>
+              <th class="py-2.5 px-3 text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="my-rounds-tbody" class="divide-y divide-slate-800/60 font-medium">
+            <!-- Dynamically rendered -->
+          </tbody>
+        </table>
+        <div id="my-rounds-empty" class="hidden p-8 text-center text-slate-400 text-xs">
+          <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-600"></i>
+          <p class="font-bold">No saved rounds found.</p>
+          <p class="text-[11px] text-slate-500 mt-1">Start a round and it will appear here!</p>
+        </div>
       </div>
     </div>
   </div>
@@ -990,7 +1008,7 @@
         <div class="flex items-center gap-2">
           <button type="button" onclick="openAddPlayerModal()" class="py-1.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition flex items-center gap-1 shadow">
             <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
-            <span>Add Player</span>
+            <span>Add Friends</span>
           </button>
           <button onclick="closeMyPlayersModal()" class="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
             <i data-lucide="x" class="w-4 h-4"></i>
@@ -1038,7 +1056,14 @@
               <th class="py-2.5 px-3">Nickname</th>
               <th class="py-2.5 px-3">Full Name</th>
               <th class="py-2.5 px-3">Linked Email</th>
-              <th class="py-2.5 px-3 text-center">Handicap</th>
+              <th class="py-2.5 px-3 text-center">
+                <div class="inline-flex items-center justify-center gap-1">
+                  <span>Handicap</span>
+                  <button type="button" onclick="openHandicapInfoModal()" class="text-slate-400 hover:text-amber-400 transition" title="WHS Handicap Determination Table">
+                    <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                  </button>
+                </div>
+              </th>
               <th class="py-2.5 px-3 text-center">Rounds</th>
               <th class="py-2.5 px-3 text-right">Cash Won/Lost</th>
               <th class="py-2.5 px-2 text-center">Action</th>
@@ -1254,6 +1279,115 @@
           <button type="submit" class="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-md">Save Profile</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- 13. WHS Handicap Determination Modal -->
+  <div id="handicap-info-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-5 space-y-4 shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="font-black text-white text-base">WHS Handicap Determination</h3>
+            <p class="text-[11px] text-slate-400">USGA Rule 5.2a Calculation Table</p>
+          </div>
+        </div>
+        <button onclick="closeHandicapInfoModal()" class="p-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/70 p-1">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-wider border-b border-slate-800">
+              <th class="py-2 px-3">Number of Scores Submitted</th>
+              <th class="py-2 px-3">Number of Differentials Used</th>
+              <th class="py-2 px-3 text-right">Adjustment (Strokes)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/60 font-medium font-mono text-xs">
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">3</td><td class="py-2 px-3 text-amber-400 font-bold">Lowest 1</td><td class="py-2 px-3 text-right text-rose-400 font-bold">-2.0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">4</td><td class="py-2 px-3 text-amber-400 font-bold">Lowest 1</td><td class="py-2 px-3 text-right text-rose-400 font-bold">-1.0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">5</td><td class="py-2 px-3 text-amber-400 font-bold">Lowest 1</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">6</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 2</td><td class="py-2 px-3 text-right text-rose-400 font-bold">-1.0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">7 – 8</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 2</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">9 – 11</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 3</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">12 – 14</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 4</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">15 – 16</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 5</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">17 – 18</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 6</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40"><td class="py-2 px-3 text-slate-300">19</td><td class="py-2 px-3 text-amber-400 font-bold">Average of lowest 7</td><td class="py-2 px-3 text-right text-slate-400">0</td></tr>
+            <tr class="hover:bg-slate-900/40 bg-emerald-950/20"><td class="py-2 px-3 text-emerald-300 font-bold">20</td><td class="py-2 px-3 text-emerald-400 font-bold">Average of lowest 8</td><td class="py-2 px-3 text-right text-slate-400">0 <span class="text-[10px] text-slate-500">(Standard WHS)</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-[11px] text-slate-400 leading-relaxed">
+        Differential = (113 / Slope Rating) × (Gross Score - Course Rating). A minimum of 3 submitted 18-hole scores is required to calculate an official Handicap Index.
+      </p>
+
+      <button type="button" onclick="closeHandicapInfoModal()" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-black text-xs transition">
+        Close
+      </button>
+    </div>
+  </div>
+
+  <!-- 14. Player Past Rounds History Modal -->
+  <div id="player-history-modal" class="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-4 sm:p-6 space-y-4 shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-black text-sm">
+            ⛳
+          </div>
+          <div>
+            <h3 id="player-history-title" class="font-black text-white text-base">Player Past Rounds</h3>
+            <p id="player-history-subtitle" class="text-[11px] text-slate-400">Scoring records, WHS differentials & match cash history</p>
+          </div>
+        </div>
+        <button onclick="closePlayerHistoryModal()" class="p-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/70 p-1 flex-1 min-h-[220px]">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr class="bg-slate-900 text-slate-400 text-[10px] font-black uppercase tracking-wider border-b border-slate-800">
+              <th class="py-2.5 px-3">Date</th>
+              <th class="py-2.5 px-3">Course</th>
+              <th class="py-2.5 px-3 text-center">Raw Score</th>
+              <th class="py-2.5 px-3 text-center">Handicap Diff</th>
+              <th class="py-2.5 px-3 text-right">Money Won/Lost</th>
+            </tr>
+          </thead>
+          <tbody id="player-history-tbody" class="divide-y divide-slate-800/60 font-medium">
+            <!-- Dynamically populated rows -->
+          </tbody>
+        </table>
+        <div id="player-history-empty" class="hidden p-8 text-center text-slate-400 text-xs">
+          <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-600"></i>
+          <p class="font-bold">No past rounds found for this player.</p>
+          <p class="text-[11px] text-slate-500 mt-1">Scores will be recorded when an 18-hole round is completed and locked.</p>
+        </div>
+        <div id="player-history-loading" class="hidden p-8 text-center text-slate-400 text-xs">
+          <div class="inline-block w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-2"></div>
+          <p class="font-bold">Loading player history...</p>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+        <span class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span>
+          <span>Green = Differentials counted towards current Handicap Index</span>
+        </span>
+        <button type="button" onclick="closePlayerHistoryModal()" class="py-1.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition">
+          Close
+        </button>
+      </div>
     </div>
   </div>
 

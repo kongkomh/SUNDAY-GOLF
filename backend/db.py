@@ -218,7 +218,10 @@ class Database:
         # Migration column safety for existing databases
         for alter_q in [
             "ALTER TABLE courses ADD COLUMN tees TEXT;",
-            "ALTER TABLE rounds ADD COLUMN selected_tee TEXT;"
+            "ALTER TABLE rounds ADD COLUMN selected_tee TEXT;",
+            "ALTER TABLE player_round_history ADD COLUMN course_name VARCHAR(255);",
+            "ALTER TABLE player_round_history ADD COLUMN cash_won REAL DEFAULT 0.0;",
+            "ALTER TABLE player_round_history ADD COLUMN currency VARCHAR(10) DEFAULT 'THB';"
         ]:
             try:
                 self.execute(alter_q)
@@ -480,11 +483,18 @@ class Database:
                         r["selected_tee"] = DEFAULT_TEES[2]
                 r["is_finished"] = bool(r.get("is_finished", 0))
                 r["is_owner"] = is_owner
-                r["round_name"] = r.get("name")
+                date_val = r.get("created_at") or time.time()
+                r["date_str"] = time.strftime("%Y-%m-%d", time.localtime(date_val)) if isinstance(date_val, (int, float)) else str(date_val)[:10]
+                creator_name = "Guest"
                 if r.get("owner_id"):
                     u = self.get_user(r["owner_id"])
                     if u:
-                        r["creator_name"] = u.get("name")
+                        parts = (u.get("name") or "Golfer").split()
+                        creator_name = parts[0] if parts else "Golfer"
+                r["creator_name"] = creator_name
+                course_title = r.get("course_name") or "Golf Course"
+                r["round_name"] = f"{r['date_str']} {course_title} - {creator_name}"
+                r["player_names"] = [p.get("name") for p in (r.get("players") or []) if p.get("name")]
                 user_rounds.append(r)
         return user_rounds
 
@@ -826,28 +836,34 @@ class Database:
             if p_record:
                 player_db_id = p_record["id"]
                 hist_id = f"diff-{round_id}-{player_db_id}"
+                c_title = round_data.get("course_name") or "Golf Course"
+                cash_val = float(sc.get("total_cash") or 0.0)
+                curr_str = (round_data.get("game_settings") or {}).get("currency", "THB")
 
                 # Store differential in player_round_history
                 if self.is_postgres:
                     self.execute(
                         """
                         INSERT INTO player_round_history 
-                        (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, created_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, course_name, cash_won, currency, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (id) DO UPDATE SET
                             gross_score = EXCLUDED.gross_score,
-                            differential = EXCLUDED.differential
+                            differential = EXCLUDED.differential,
+                            course_name = EXCLUDED.course_name,
+                            cash_won = EXCLUDED.cash_won,
+                            currency = EXCLUDED.currency
                         """,
-                        (hist_id, player_db_id, round_id, round_date, int(gross), course_rating, slope_rating, differential, now)
+                        (hist_id, player_db_id, round_id, round_date, int(gross), course_rating, slope_rating, differential, c_title, cash_val, curr_str, now)
                     )
                 else:
                     self.execute(
                         """
                         INSERT OR REPLACE INTO player_round_history 
-                        (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, course_name, cash_won, currency, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (hist_id, player_db_id, round_id, round_date, int(gross), course_rating, slope_rating, differential, now)
+                        (hist_id, player_db_id, round_id, round_date, int(gross), course_rating, slope_rating, differential, c_title, cash_val, curr_str, now)
                     )
 
                 # Query last 20 score differentials
@@ -867,6 +883,63 @@ class Database:
                     print(f"[WHS HCP] Updated {p_record['nickname']} handicap to {new_hcp} (USGA Rule 5.2a using {count} rounds).")
                 else:
                     print(f"[WHS HCP] {p_record['nickname']} has {count} round(s) recorded (minimum 3 required for official Handicap Index).")
+
+    def get_player_rounds_history(self, player_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieves up to 20 past rounds for a player with:
+        Date, course, raw score, handicap differential, counting flag (is_counting), and cash won.
+        """
+        rows = self.query_all(
+            "SELECT * FROM player_round_history WHERE player_id = ? ORDER BY round_date DESC, created_at DESC LIMIT 20",
+            (player_id,)
+        )
+
+        items = []
+        for r in rows:
+            c_name = r.get("course_name")
+            if not c_name and r.get("round_id"):
+                rnd = self.get_round(r["round_id"])
+                if rnd:
+                    c_name = rnd.get("course_name")
+            items.append({
+                "id": r["id"],
+                "round_id": r["round_id"],
+                "round_date": r["round_date"],
+                "course_name": c_name or "Golf Course",
+                "gross_score": int(r.get("gross_score", 0)),
+                "differential": float(r.get("differential", 0.0)),
+                "cash_won": float(r.get("cash_won") or 0.0),
+                "currency": r.get("currency") or "THB"
+            })
+
+        # Determine which differentials count towards handicap per USGA Rule 5.2a
+        n = len(items)
+        if n < 3:
+            k = 0
+        elif 3 <= n <= 5:
+            k = 1
+        elif 6 <= n <= 8:
+            k = 2
+        elif 9 <= n <= 11:
+            k = 3
+        elif 12 <= n <= 14:
+            k = 4
+        elif 15 <= n <= 16:
+            k = 5
+        elif 17 <= n <= 18:
+            k = 6
+        elif n == 19:
+            k = 7
+        else:
+            k = 8
+
+        # Lowest k differentials count
+        indexed = sorted(enumerate(items), key=lambda x: x[1]["differential"])
+        counting_indices = set(idx for idx, _ in indexed[:k])
+        for i, itm in enumerate(items):
+            itm["is_counting"] = (i in counting_indices)
+
+        return items
 
 
 def calculate_whs_handicap(diffs: List[float]) -> Optional[float]:
