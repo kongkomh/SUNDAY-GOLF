@@ -1480,14 +1480,15 @@ function renderScorecardTable() {
   const scorecards = state.tournament.player_scorecards || [];
   const calcHoles = state.tournament.calculated_holes || [];
   const isWolf = (state.tournament.game_settings?.game_mode === 'WOLF');
-  const isStarting10 = (state.tournament.starting_hole === 10);
 
-  const group1Holes = isStarting10 ? holes.slice(9, 18) : holes.slice(0, 9);
-  const group1Title = isStarting10 ? 'IN' : 'OUT';
+  // Scorecard always goes 1 to 18 (OUT: 1-9, IN: 10-18) regardless of starting hole
+  const sortedHoles = [...holes].sort((a, b) => (a.hole || 0) - (b.hole || 0));
+  const group1Holes = sortedHoles.filter(h => (h.hole || 0) <= 9);
+  const group1Title = 'OUT';
   const group1Par = group1Holes.reduce((a, b) => a + (b.par || 4), 0);
 
-  const group2Holes = isStarting10 ? holes.slice(0, 9) : holes.slice(9, 18);
-  const group2Title = isStarting10 ? 'OUT' : 'IN';
+  const group2Holes = sortedHoles.filter(h => (h.hole || 0) > 9);
+  const group2Title = 'IN';
   const group2Par = group2Holes.reduce((a, b) => a + (b.par || 4), 0);
 
   const totPar = group1Par + group2Par;
@@ -1561,7 +1562,7 @@ function renderScorecardTable() {
       html += `<td>${renderGolfBadge(score, par, hasHcp, isWolfPlayer)}</td>`;
     });
 
-    const g1Gross = isStarting10 ? (p.in_gross || '-') : (p.out_gross || '-');
+    const g1Gross = p.out_gross || '-';
     html += `<td class="font-black bg-slate-900/80 text-slate-200">${g1Gross}</td>`;
 
     // Group 2 (Second 9 played)
@@ -1575,7 +1576,7 @@ function renderScorecardTable() {
       html += `<td>${renderGolfBadge(score, par, hasHcp, isWolfPlayer)}</td>`;
     });
 
-    const g2Gross = isStarting10 ? (p.out_gross || '-') : (p.in_gross || '-');
+    const g2Gross = p.in_gross || '-';
     html += `<td class="font-black bg-slate-900/80 text-slate-200">${g2Gross}</td>`;
 
     // TOT Gross
