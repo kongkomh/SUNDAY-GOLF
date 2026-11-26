@@ -3847,7 +3847,8 @@ function renderMyPlayersTable(stats, currency = 'THB') {
   tbody.innerHTML = stats.map(p => {
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ') || '-';
     const emailStr = p.email || '-';
-    const hcpStr = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '-';
+    const hcpVal = p.current_handicap != null ? p.current_handicap : p.handicap;
+    const hcpStr = hcpVal != null ? Number(hcpVal).toFixed(1) : '-';
     const rounds = p.rounds_played || 0;
     const cash = (p.total_cash !== undefined) ? p.total_cash : (p.total_cash_won_lost || 0);
 
@@ -3855,7 +3856,7 @@ function renderMyPlayersTable(stats, currency = 'THB') {
     const isNeg = cash < 0;
     const cashClass = isPos ? 'text-emerald-400' : (isNeg ? 'text-rose-400' : 'text-slate-400');
     const cashPrefix = isPos ? '+' : '';
-    const cashStr = `${cashPrefix}${cash.toLocaleString()} ${currency}`;
+    const cashStr = `${cashPrefix}${cash.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency}`;
     const safeNick = (p.nickname || '').replace(/'/g, "\\'");
 
     return `
@@ -4052,19 +4053,24 @@ async function openPlayerHistoryModal(playerId, nickname) {
 
           const cash = item.cash_won || 0;
           const curr = item.currency || 'THB';
+          const cashFormatted = cash.toLocaleString(undefined, { maximumFractionDigits: 2 });
           let cashHtml = '';
           if (cash > 0) {
-            cashHtml = `<span class="font-mono font-black text-emerald-400 text-xs">+${cash.toLocaleString()} ${curr}</span>`;
+            cashHtml = `<span class="font-mono font-black text-emerald-400 text-xs">+${cashFormatted} ${curr}</span>`;
           } else if (cash < 0) {
-            cashHtml = `<span class="font-mono font-black text-rose-400 text-xs">${cash.toLocaleString()} ${curr}</span>`;
+            cashHtml = `<span class="font-mono font-black text-rose-400 text-xs">${cashFormatted} ${curr}</span>`;
           } else {
             cashHtml = `<span class="font-mono text-slate-400 text-xs">0 ${curr}</span>`;
           }
 
+          const safeRoundId = String(item.round_id || '').replace(/'/g, "\\'");
+
           return `
-            <tr class="hover:bg-slate-900/40 transition">
+            <tr class="hover:bg-slate-800/60 transition cursor-pointer group" onclick="openRoundFromHistory('${safeRoundId}')" title="Click to open round Leaderboard">
               <td class="py-2.5 px-3 text-slate-300 font-mono text-xs whitespace-nowrap">${dateStr}</td>
-              <td class="py-2.5 px-3 font-bold text-white text-xs">${item.course_name || 'Golf Course'}</td>
+              <td class="py-2.5 px-3 font-bold text-white text-xs">
+                <span class="group-hover:text-amber-400 group-hover:underline underline-offset-2 transition">${item.course_name || 'Golf Course'}</span>
+              </td>
               <td class="py-2.5 px-3 text-center font-mono font-bold text-slate-200 text-xs">${rawScore}</td>
               <td class="py-2.5 px-3 text-center text-xs">${diffHtml}</td>
               <td class="py-2.5 px-3 text-right text-xs whitespace-nowrap">${cashHtml}</td>
@@ -4080,6 +4086,25 @@ async function openPlayerHistoryModal(playerId, nickname) {
     if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-400 text-xs">Network error loading round history.</td></tr>`;
   }
   initIcons();
+}
+
+async function openRoundFromHistory(rId) {
+  if (!rId) return;
+  closePlayerHistoryModal();
+  closeMyPlayersModal();
+
+  const newUrl = `${window.location.origin}/round/${encodeURIComponent(rId)}`;
+  if (window.location.href !== newUrl) {
+    window.history.pushState({ roundId: rId }, '', newUrl);
+  }
+  state.roundId = rId;
+  state.localScores = {};
+  state.unlockedHoles = {};
+  state.activeTab = 'leaderboard';
+
+  await fetchInitialState();
+  switchTab('leaderboard');
+  showToast("Loaded round!");
 }
 
 function closePlayerHistoryModal() {

@@ -613,8 +613,8 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
         if path == "/api/players/stats":
             params = urllib.parse.parse_qs(parsed.query)
             r_type = params.get("range", ["all"])[0]
-            s_date = params.get("start", [None])[0]
-            e_date = params.get("end", [None])[0]
+            s_date = params.get("start_date", params.get("start", [None]))[0]
+            e_date = params.get("end_date", params.get("end", [None]))[0]
             curr = params.get("currency", ["THB"])[0]
             stats = db.get_players_stats(user_id, range_type=r_type, start_date=s_date, end_date=e_date, target_currency=curr)
             self.send_json_response(stats)

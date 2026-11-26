@@ -333,28 +333,108 @@ found_man = next(r for r in r_my["json"] if r["id"] == man_id)
 assert "round_name" in found_man and found_man["round_name"]
 print("PASS: Manual turbo holes preserved on round and returned in My Rounds list")
 
-# 27. Verify Player Round History & WHS Counting Flags
-# Insert test history rows for alice_id
+# 27. Verify Player Round History & Roster Cash Sum Match Leaderboard Exactly (Finished SQL Rounds Only)
+other_p1 = db.create_player(f"OPP1_{int(time.time())}", "Opp", "One", None, None, 12.0)
+other_p2 = db.create_player(f"OPP2_{int(time.time())}", "Opp", "Two", None, None, 15.0)
+other_p3 = db.create_player(f"OPP3_{int(time.time())}", "Opp", "Three", None, None, 18.0)
+
+created_test_rounds = []
 for i in range(1, 6):
+    # Create a real round in SQL with custom turbo hole 1 & starting hole 10
+    r_tr = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
+    tr_id = r_tr["json"]["round_id"]
+    created_test_rounds.append(tr_id)
+
+    # Set players with explicit player_ids
+    invoke_request("POST", f"/api/round/{tr_id}/players", body={
+        "players": [
+            {"id": "p1", "player_id": alice_id, "name": f"PRO_{dummy_nick}", "color": "#FFFFFF", "hcp_out": 2, "hcp_in": 2, "default_team": "left"},
+            {"id": "p2", "player_id": other_p1["id"], "name": other_p1["nickname"], "color": "#1E293B", "hcp_out": 0, "hcp_in": 0, "default_team": "left"},
+            {"id": "p3", "player_id": other_p2["id"], "name": other_p2["nickname"], "color": "#EF4444", "hcp_out": 0, "hcp_in": 0, "default_team": "right"},
+            {"id": "p4", "player_id": other_p3["id"], "name": other_p3["nickname"], "color": "#3B82F6", "hcp_out": 0, "hcp_in": 0, "default_team": "right"}
+        ]
+    }, headers=auth_headers)
+
+    # Custom course holes with Turbo on Hole 1 & custom Tee rating=72.0, slope=113.0
+    custom_holes = [{"hole": h_idx, "par": 4, "handicap": h_idx, "is_turbo": (h_idx == 1)} for h_idx in range(1, 19)]
+    invoke_request("POST", f"/api/round/{tr_id}/course", body={
+        "course_name": "Krungthep Kreetha",
+        "holes": custom_holes,
+        "selected_tee": {"id": "white", "name": "White", "course_rating": 72.0, "slope_rating": 113}
+    }, headers=auth_headers)
+
+    # Configure USD on round 5 to test native currency in Past Rounds vs converted sum in Roster
+    round_curr = "USD" if i == 5 else "THB"
     db.execute(
-        """
-        INSERT OR REPLACE INTO player_round_history 
-        (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, course_name, cash_won, currency, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (f"test-hist-{alice_id}-{i}", alice_id, f"test-round-{i}", f"2026-11-0{i}", 80 + i, 72.0, 113.0, 10.0 + i, "Krungthep Kreetha", 500.0 if i % 2 == 1 else -300.0, "THB", 1794671000 + i)
+        "UPDATE rounds SET game_settings = ?, created_at = ? WHERE id = ?",
+        (json.dumps({"game_mode": "TEAMS", "hand_count": 1, "cash_per_point": 100 if round_curr == "THB" else 10, "turbo": True, "turbo_multiplier": 3, "currency": round_curr}), 1794671000.0 + i * 86400.0, tr_id)
     )
+
+    # Enter 18 holes so Alice shoots (80 + i): 17 holes of par (4) = 68, plus hole 1 = (12 + i) or vary hole 18
+    for h_idx in range(1, 19):
+        alice_s = 3 if (h_idx == 1 and i % 2 == 1) else (5 if (h_idx == 1 and i % 2 == 0) else 4)
+        # Adjust hole 18 score so total gross is exactly 80 + i (72 + 8 + i)
+        if h_idx == 18:
+            used_so_far = (3 if i % 2 == 1 else 5) + 16 * 4
+            alice_s = (80 + i) - used_so_far
+        invoke_request("POST", f"/api/round/{tr_id}/score", body={
+            "hole": h_idx,
+            "scores": {"p1": alice_s, "p2": 4, "p3": 4, "p4": 5},
+            "team_a": ["p1", "p2"],
+            "team_b": ["p3", "p4"]
+        }, headers=auth_headers)
+
+    # Finish round
+    r_fin = invoke_request("POST", f"/api/round/{tr_id}/finish", body={}, headers=auth_headers)
+    assert r_fin["status"] == 200
+
+# Also create 1 UNFINISHED round with scores for Alice and verify it is NOT counted in Past Rounds or Roster
+r_unfin = invoke_request("POST", "/api/rounds", body={"course_id": "course-krungthep-kreetha"}, headers=auth_headers)
+unfin_id = r_unfin["json"]["round_id"]
+invoke_request("POST", f"/api/round/{unfin_id}/players", body={
+    "players": [
+        {"id": "p1", "player_id": alice_id, "name": f"PRO_{dummy_nick}", "color": "#FFFFFF", "hcp_out": 0, "hcp_in": 0, "default_team": "left"},
+        {"id": "p2", "player_id": other_p1["id"], "name": other_p1["nickname"], "color": "#1E293B", "hcp_out": 0, "hcp_in": 0, "default_team": "left"},
+        {"id": "p3", "player_id": other_p2["id"], "name": other_p2["nickname"], "color": "#EF4444", "hcp_out": 0, "hcp_in": 0, "default_team": "right"},
+        {"id": "p4", "player_id": other_p3["id"], "name": other_p3["nickname"], "color": "#3B82F6", "hcp_out": 0, "hcp_in": 0, "default_team": "right"}
+    ]
+}, headers=auth_headers)
+invoke_request("POST", f"/api/round/{unfin_id}/score", body={
+    "hole": 1,
+    "scores": {"p1": 3, "p2": 4, "p3": 5, "p4": 5},
+    "team_a": ["p1", "p2"],
+    "team_b": ["p3", "p4"]
+}, headers=auth_headers)
+
 r_hist = invoke_request("GET", f"/api/players/{alice_id}/history", headers=auth_headers)
 assert r_hist["status"] == 200
 hist_list = r_hist["json"]
-assert len(hist_list) == 5
-# Lowest differential (11.0) must be counting per Rule 5.2a (for 5 scores, lowest 1 used)
+assert len(hist_list) == 5, f"Expected 5 finished rounds in history, got {len(hist_list)}"
+assert all(h["round_id"] != unfin_id for h in hist_list), "Unfinished round must not appear in Past Rounds"
+
+# Verify EVERY past round's cash_won matches that round's Leaderboard total_cash in native currency
+from db import convert_currency
+expected_thb_sum = 0.0
+for h in hist_list:
+    r_state = invoke_request("GET", f"/api/round/{h['round_id']}", headers=auth_headers)["json"]
+    lb_alice = next(p for p in r_state["leaderboard"] if p.get("player_id") == alice_id)
+    assert h["cash_won"] == lb_alice["total_cash"], f"Mismatch on {h['round_id']}: history={h['cash_won']} vs leaderboard={lb_alice['total_cash']}"
+    assert h["currency"] == (r_state["game_settings"].get("currency") or "THB")
+    expected_thb_sum += convert_currency(h["cash_won"], h["currency"], "THB")
+
+# Verify My Players Roster CASH WON/LOST equals the exact converted sum of Past Rounds
+r_stats_thb = invoke_request("GET", "/api/players/stats?currency=THB&range=all", headers=auth_headers)
+assert r_stats_thb["status"] == 200
+alice_stat = next(p for p in r_stats_thb["json"] if p["id"] == alice_id)
+assert alice_stat["rounds_played"] == 5
+assert alice_stat["total_cash"] == round(expected_thb_sum, 2), f"Roster sum {alice_stat['total_cash']} != expected {round(expected_thb_sum, 2)}"
+
+# Lowest differential (9.0 -> 81 - 72.0 = 9.0) must be counting per Rule 5.2a (for 5 scores, lowest 1 used)
 counting_items = [h for h in hist_list if h.get("is_counting")]
 assert len(counting_items) == 1
-assert counting_items[0]["differential"] == 11.0
+assert counting_items[0]["differential"] == 9.0
 assert hist_list[0]["course_name"] == "Krungthep Kreetha"
-assert "cash_won" in hist_list[0]
-print(f"PASS: Player history API returns past rounds with counting flags and cash: {len(hist_list)} rounds, counting: {counting_items[0]['differential']}")
+print(f"PASS: Player history & Roster cash sum match Leaderboard across all {len(hist_list)} finished rounds (THB sum={alice_stat['total_cash']})")
 
 # 28. Verify Admin Access Control & 403 Forbidden for Non-Admin
 r_unauth_admin = invoke_request("GET", "/api/admin/accounts", headers=auth_headers)

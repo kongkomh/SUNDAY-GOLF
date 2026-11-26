@@ -711,6 +711,7 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
             p_def_team = "left" if idx < (len(raw_players) // 2) else "right"
         players.append({
             "id": p_id,
+            "player_id": p.get("player_id"),
             "name": p_name,
             "color": p_color,
             "hcp_out": max(0, p_out),
@@ -724,6 +725,7 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
         p_def_team = "left" if idx < 2 else "right"
         players.append({
             "id": f"p{idx+1}",
+            "player_id": None,
             "name": DEFAULT_PLAYER_NAMES[min(idx, len(DEFAULT_PLAYER_NAMES)-1)],
             "color": DEFAULT_PLAYER_COLORS[min(idx, len(DEFAULT_PLAYER_COLORS)-1)],
             "hcp_out": 0,
