@@ -2317,6 +2317,10 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('[id^="p-autocomplete-"]') && !e.target.closest('[id^="p-name-"]')) {
     document.querySelectorAll('[id^="p-autocomplete-"]').forEach(el => el.classList.add('hidden'));
   }
+  if (!e.target.closest('#admin-manual-player-picker-container')) {
+    const adminPicker = document.getElementById('admin-manual-player-dropdown');
+    if (adminPicker) adminPicker.classList.add('hidden');
+  }
 });
 
 async function savePlayersLineup() {
@@ -4181,7 +4185,9 @@ async function submitCreatePlayer(e) {
 const adminData = {
   accounts: { users: [], players: [] },
   allRounds: [],
-  manualLineup: []
+  manualLineup: [],
+  allAvailablePlayers: [],
+  selectedManualPlayerId: null
 };
 
 function openAdminModal() {
@@ -4429,19 +4435,112 @@ async function initAdminManualRoundForm() {
   onAdminManualCourseChange();
 
   // 2. Populate player dropdown from catalog
+  let allPlayers = adminData.accounts.players;
+  if (!allPlayers || allPlayers.length === 0) {
+    const res = await fetch('/api/players');
+    if (res.ok) allPlayers = await res.json();
+  }
+  adminData.allAvailablePlayers = allPlayers || [];
+
   const pSelect = document.getElementById('admin-manual-add-player-select');
   if (pSelect) {
-    let allPlayers = adminData.accounts.players;
-    if (!allPlayers || allPlayers.length === 0) {
-      const res = await fetch('/api/players');
-      if (res.ok) allPlayers = await res.json();
-    }
-    pSelect.innerHTML = (allPlayers || []).map(p => `
+    pSelect.innerHTML = adminData.allAvailablePlayers.map(p => `
       <option value="${p.id}">${p.nickname} (${p.first_name || ''} ${p.last_name || ''})</option>
     `).join('');
   }
 
+  if (!adminData.selectedManualPlayerId && adminData.allAvailablePlayers.length > 0) {
+    adminData.selectedManualPlayerId = adminData.allAvailablePlayers[0].id;
+  }
+  updateAdminManualPlayerButtonLabel();
+  renderAdminManualPlayerOptions(adminData.allAvailablePlayers);
+
   renderAdminManualLineup();
+}
+
+function updateAdminManualPlayerButtonLabel() {
+  const btnLabel = document.getElementById('admin-manual-player-btn-label');
+  const pSelect = document.getElementById('admin-manual-add-player-select');
+  if (!btnLabel) return;
+
+  const current = (adminData.allAvailablePlayers || []).find(p => p.id === adminData.selectedManualPlayerId);
+  if (current) {
+    const fullName = `${current.first_name || ''} ${current.last_name || ''}`.trim();
+    btnLabel.textContent = fullName ? `${current.nickname} (${fullName})` : current.nickname;
+    if (pSelect) pSelect.value = current.id;
+  } else {
+    btnLabel.textContent = 'Select Player...';
+  }
+}
+
+function toggleAdminManualPlayerDropdown(event) {
+  if (event) event.stopPropagation();
+  const dropdown = document.getElementById('admin-manual-player-dropdown');
+  if (!dropdown) return;
+
+  const isHidden = dropdown.classList.contains('hidden');
+  if (isHidden) {
+    dropdown.classList.remove('hidden');
+    const searchInp = document.getElementById('admin-manual-player-search');
+    if (searchInp) {
+      searchInp.value = '';
+      setTimeout(() => searchInp.focus(), 50);
+    }
+    renderAdminManualPlayerOptions(adminData.allAvailablePlayers);
+  } else {
+    dropdown.classList.add('hidden');
+  }
+}
+
+function filterAdminManualPlayerDropdown(query) {
+  const q = (query || '').toLowerCase().trim();
+  if (!q) {
+    renderAdminManualPlayerOptions(adminData.allAvailablePlayers);
+    return;
+  }
+  const filtered = (adminData.allAvailablePlayers || []).filter(p => {
+    const nick = (p.nickname || '').toLowerCase();
+    const first = (p.first_name || '').toLowerCase();
+    const last = (p.last_name || '').toLowerCase();
+    return nick.includes(q) || first.includes(q) || last.includes(q);
+  });
+  renderAdminManualPlayerOptions(filtered);
+}
+
+function renderAdminManualPlayerOptions(players) {
+  const container = document.getElementById('admin-manual-player-options');
+  if (!container) return;
+
+  if (!players || players.length === 0) {
+    container.innerHTML = `<div class="p-3 text-center text-slate-500 text-xs font-bold">No players found</div>`;
+    return;
+  }
+
+  container.innerHTML = players.map(p => {
+    const isSelected = p.id === adminData.selectedManualPlayerId;
+    const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+    const safeNick = (p.nickname || '').replace(/'/g, "\\'");
+    const safeFull = fullName.replace(/'/g, "\\'");
+    return `
+      <button type="button" onclick="selectAdminManualPlayer('${p.id}', '${safeNick}', '${safeFull}')"
+              class="w-full text-left px-3 py-2 hover:bg-slate-800/80 rounded-lg flex items-center justify-between text-xs transition ${isSelected ? 'bg-sky-950/40 text-sky-300' : 'text-slate-300'}">
+        <div class="truncate">
+          <span class="font-bold text-white">${p.nickname}</span>
+          ${fullName ? `<span class="text-slate-400 text-[11px] ml-1">(${fullName})</span>` : ''}
+        </div>
+        ${isSelected ? `<i data-lucide="check" class="w-3.5 h-3.5 text-sky-400 shrink-0"></i>` : ''}
+      </button>
+    `;
+  }).join('');
+
+  initIcons();
+}
+
+function selectAdminManualPlayer(id, nickname, fullName) {
+  adminData.selectedManualPlayerId = id;
+  updateAdminManualPlayerButtonLabel();
+  const dropdown = document.getElementById('admin-manual-player-dropdown');
+  if (dropdown) dropdown.classList.add('hidden');
 }
 
 function onAdminManualCourseChange() {
@@ -4468,15 +4567,19 @@ function onAdminManualCourseChange() {
 
 function addPlayerToAdminManualLineup() {
   const pSelect = document.getElementById('admin-manual-add-player-select');
-  if (!pSelect || !pSelect.value) return;
+  const pId = adminData.selectedManualPlayerId || (pSelect ? pSelect.value : null);
+  if (!pId) {
+    showToast("Please select a player to add.", "warning");
+    return;
+  }
 
-  const pId = pSelect.value;
   if (adminData.manualLineup.some(p => p.player_id === pId)) {
     showToast("Player is already in this lineup.", "warning");
     return;
   }
 
-  const pName = pSelect.options[pSelect.selectedIndex].text.split('(')[0].trim();
+  const pObj = (adminData.allAvailablePlayers || []).find(p => p.id === pId);
+  const pName = pObj ? pObj.nickname : (pSelect && pSelect.options[pSelect.selectedIndex] ? pSelect.options[pSelect.selectedIndex].text.split('(')[0].trim() : 'Player');
   adminData.manualLineup.push({
     player_id: pId,
     name: pName,
@@ -4606,8 +4709,8 @@ async function loadAdminAllRounds() {
         tbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-500 text-xs font-bold">No rounds recorded in database.</td></tr>`;
       } else {
         tbody.innerHTML = rounds.map(r => {
-          const typeBadge = r.is_manual
-            ? `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-sky-500/20 text-sky-300 border border-sky-400/40">MANUAL</span>`
+          const statusBadge = r.is_finished
+            ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">FINISHED</span>`
             : `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">LIVE</span>`;
 
           const safeName = (r.name || 'Round').replace(/'/g, "\\'");
@@ -4626,7 +4729,7 @@ async function loadAdminAllRounds() {
                 <div class="font-bold text-white text-xs">${r.creator_name || '-'}</div>
                 <div class="text-[10px] text-slate-500 font-mono">${r.creator_email || '-'}</div>
               </td>
-              <td class="py-2.5 px-3 text-center">${typeBadge}</td>
+              <td class="py-2.5 px-3 text-center">${statusBadge}</td>
               <td class="py-2.5 px-3 text-center text-slate-300 text-xs">${playersStr}</td>
               <td class="py-2.5 px-3 text-right">
                 <button type="button" onclick="adminDeleteRound('${r.id}', '${safeName}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round permanently">

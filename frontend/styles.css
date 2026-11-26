@@ -4,6 +4,10 @@ html {
 }
 
 /* Custom Smooth Scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(71, 85, 105, 0.8) rgba(15, 23, 42, 0.6);
+}
 .scrollbar-thin::-webkit-scrollbar {
   height: 6px;
   width: 6px;

@@ -1555,8 +1555,22 @@
               <p class="text-[11px] text-slate-400">Add players to this round. If gross score is left blank, the round is excluded from their WHS handicap calculation while still recording cash won/lost.</p>
             </div>
             <div class="flex items-center gap-2">
-              <select id="admin-manual-add-player-select" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs">
-                <!-- Populated dynamically -->
+              <div class="relative" id="admin-manual-player-picker-container">
+                <button type="button" id="admin-manual-player-btn" onclick="toggleAdminManualPlayerDropdown(event)" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-bold text-xs flex items-center justify-between gap-2 min-w-[200px] sm:min-w-[240px] text-left hover:border-slate-500 transition focus:outline-none">
+                  <span id="admin-manual-player-btn-label" class="truncate">Select Player...</span>
+                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i>
+                </button>
+                <div id="admin-manual-player-dropdown" class="hidden absolute left-0 top-full mt-1.5 z-50 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+                  <div class="p-2 border-b border-slate-800 bg-slate-950/80">
+                    <input id="admin-manual-player-search" type="text" placeholder="Search player..." oninput="filterAdminManualPlayerDropdown(this.value)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-sky-500">
+                  </div>
+                  <div id="admin-manual-player-options" class="max-h-48 overflow-y-auto scrollbar-thin divide-y divide-slate-800/60 p-1">
+                    <!-- Populated dynamically -->
+                  </div>
+                </div>
+              </div>
+              <select id="admin-manual-add-player-select" class="hidden">
+                <!-- Kept synced for fallback -->
               </select>
               <button type="button" onclick="addPlayerToAdminManualLineup()" class="py-1.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs transition flex items-center gap-1 shrink-0">
                 <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
@@ -1619,7 +1633,7 @@
                 <th class="py-2.5 px-3">Date & Round Name</th>
                 <th class="py-2.5 px-3">Course</th>
                 <th class="py-2.5 px-3">Creator / Owner</th>
-                <th class="py-2.5 px-3 text-center">Type</th>
+                <th class="py-2.5 px-3 text-center">Status</th>
                 <th class="py-2.5 px-3 text-center">Players</th>
                 <th class="py-2.5 px-3 text-right">Delete</th>
               </tr>
