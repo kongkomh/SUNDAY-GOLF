@@ -396,6 +396,7 @@ async function fetchCourses() {
 function updateTournamentState(data) {
   state.tournament = data;
 
+  updateManualRoundTabState();
   syncHoleTeamAssignments();
   applyThaiEditionText();
   renderHeader();
@@ -1797,12 +1798,13 @@ function renderLeaderboard() {
     }
 
     const rankStr = p.rank_display || (idx + 1);
+    const showCash = (p.total_played > 0 || p.total_cash !== 0 || Boolean(t.is_manual));
 
     return `
       <div class="grid grid-cols-12 items-center py-3 px-3 text-xs hover:bg-slate-800/40 transition">
         
         <!-- POS -->
-        <div class="col-span-1 text-center font-mono font-black ${idx === 0 && p.total_played > 0 ? 'text-amber-400 text-sm' : 'text-slate-300'}">
+        <div class="col-span-1 text-center font-mono font-black ${idx === 0 && (p.total_played > 0 || t.is_manual) ? 'text-amber-400 text-sm' : 'text-slate-300'}">
           ${rankStr}
         </div>
 
@@ -1824,7 +1826,7 @@ function renderLeaderboard() {
 
         <!-- CASH -->
         <div class="col-span-3 text-right pr-2 font-mono text-xs sm:text-sm ${cashClass}">
-          ${p.total_played > 0 ? cashStr : '-'}
+          ${showCash ? cashStr : '-'}
         </div>
 
       </div>
@@ -3024,6 +3026,9 @@ async function restoreDefaultData() {
 
 // ================= TAB NAVIGATION =================
 function switchTab(tabId) {
+  if (state.isManualRound && tabId !== 'leaderboard') {
+    tabId = 'leaderboard';
+  }
   state.activeTab = tabId;
 
   document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -3040,6 +3045,9 @@ function switchTab(tabId) {
       } else {
         btn.className = "flex-1 py-2 px-2 text-center rounded-xl transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white";
       }
+      if (state.isManualRound && t !== 'leaderboard') {
+        btn.classList.add('opacity-30', 'pointer-events-none', 'cursor-not-allowed');
+      }
     }
 
     const mobBtn = document.getElementById(`tab-btn-mobile-${t}`);
@@ -3048,6 +3056,9 @@ function switchTab(tabId) {
         mobBtn.className = "flex-1 flex flex-col items-center justify-center py-1 text-amber-400 font-black transition";
       } else {
         mobBtn.className = "flex-1 flex flex-col items-center justify-center py-1 text-slate-400 hover:text-slate-200 font-medium transition";
+      }
+      if (state.isManualRound && t !== 'leaderboard') {
+        mobBtn.classList.add('opacity-30', 'pointer-events-none', 'cursor-not-allowed');
       }
     }
   });
@@ -3062,6 +3073,47 @@ function switchTab(tabId) {
 
   window.scrollTo({ top: 0, behavior: 'smooth' });
   initIcons();
+}
+
+function updateManualRoundTabState() {
+  const isManual = Boolean(state.tournament && (state.tournament.is_manual || state.tournament.game_settings?.is_manual));
+  state.isManualRound = isManual;
+
+  const banner = document.getElementById('manual-round-banner');
+  if (banner) {
+    if (isManual) banner.classList.remove('hidden');
+    else banner.classList.add('hidden');
+  }
+
+  const disabledTabs = ['play', 'scorecard', 'momentum', 'settings'];
+  disabledTabs.forEach(t => {
+    const desktopBtn = document.getElementById(`tab-btn-${t}`);
+    const mobileBtn = document.getElementById(`tab-btn-mobile-${t}`);
+
+    if (isManual) {
+      if (desktopBtn) {
+        desktopBtn.classList.add('opacity-30', 'pointer-events-none', 'cursor-not-allowed');
+        desktopBtn.title = 'Disabled for manual round';
+      }
+      if (mobileBtn) {
+        mobileBtn.classList.add('opacity-30', 'pointer-events-none', 'cursor-not-allowed');
+        mobileBtn.title = 'Disabled for manual round';
+      }
+    } else {
+      if (desktopBtn) {
+        desktopBtn.classList.remove('opacity-30', 'pointer-events-none', 'cursor-not-allowed');
+        desktopBtn.removeAttribute('title');
+      }
+      if (mobileBtn) {
+        mobileBtn.classList.remove('opacity-30', 'pointer-events-none', 'cursor-not-allowed');
+        mobileBtn.removeAttribute('title');
+      }
+    }
+  });
+
+  if (isManual && state.activeTab !== 'leaderboard') {
+    switchTab('leaderboard');
+  }
 }
 
 function str(v) {
@@ -3120,7 +3172,17 @@ function renderAuth() {
   const container = document.getElementById('auth-container');
   const myRoundsBtn = document.getElementById('btn-my-rounds');
   const myPlayersBtn = document.getElementById('btn-my-players');
+  const adminConsoleBtn = document.getElementById('btn-admin-console');
   const user = state.currentUser;
+
+  const isAdmin = Boolean(user && (user.is_admin || (user.email && user.email.toLowerCase() === 'kongkomh@gmail.com')));
+  if (adminConsoleBtn) {
+    if (isAdmin) {
+      adminConsoleBtn.classList.remove('hidden');
+    } else {
+      adminConsoleBtn.classList.add('hidden');
+    }
+  }
 
   if (user && user.id) {
     if (myRoundsBtn) {
@@ -3378,7 +3440,9 @@ function renderMyRoundsList(rounds) {
       : 'None';
 
     let statusBadge = '';
-    if (isCurrent) {
+    if (r.is_manual) {
+      statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-sky-500/20 text-sky-300 border border-sky-400/40 uppercase shadow-sm">Manual</span>`;
+    } else if (isCurrent) {
       statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-amber-500 text-slate-950 uppercase shadow-sm">Active</span>`;
     } else if (isFinished) {
       statusBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">Finished</span>`;
@@ -3781,7 +3845,7 @@ function renderMyPlayersTable(stats, currency = 'THB') {
     const emailStr = p.email || '-';
     const hcpStr = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '-';
     const rounds = p.rounds_played || 0;
-    const cash = p.total_cash_won_lost || 0;
+    const cash = (p.total_cash !== undefined) ? p.total_cash : (p.total_cash_won_lost || 0);
 
     const isPos = cash > 0;
     const isNeg = cash < 0;
@@ -4110,5 +4174,497 @@ async function submitCreatePlayer(e) {
       warnMsg.textContent = "Network error creating player.";
       warn.classList.remove('hidden');
     }
+  }
+}
+
+// ================= ADMIN CONSOLE CONTROLLER =================
+const adminData = {
+  accounts: { users: [], players: [] },
+  allRounds: [],
+  manualLineup: []
+};
+
+function openAdminModal() {
+  const user = state.currentUser;
+  const isAdmin = Boolean(user && (user.is_admin || (user.email && user.email.toLowerCase() === 'kongkomh@gmail.com')));
+  if (!isAdmin) {
+    showToast("Access denied: Admin credentials required.", "error");
+    return;
+  }
+  const modal = document.getElementById('admin-modal');
+  if (modal) modal.classList.remove('hidden');
+  switchAdminTab('accounts');
+}
+
+function closeAdminModal() {
+  const modal = document.getElementById('admin-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function switchAdminTab(tabName) {
+  const tabs = ['accounts', 'manual', 'rounds'];
+  tabs.forEach(t => {
+    const btn = document.getElementById(`admin-tab-btn-${t}`);
+    const view = document.getElementById(`admin-view-${t}`);
+    if (btn) {
+      if (t === tabName) {
+        btn.className = "py-2 px-3 rounded-xl transition flex items-center gap-1.5 bg-amber-500 text-slate-950 font-black shrink-0";
+      } else {
+        btn.className = "py-2 px-3 rounded-xl transition flex items-center gap-1.5 text-slate-400 hover:text-white hover:bg-slate-800 shrink-0";
+      }
+    }
+    if (view) {
+      if (t === tabName) view.classList.remove('hidden');
+      else view.classList.add('hidden');
+    }
+  });
+
+  if (tabName === 'accounts') {
+    loadAdminAccounts();
+  } else if (tabName === 'manual') {
+    initAdminManualRoundForm();
+  } else if (tabName === 'rounds') {
+    loadAdminAllRounds();
+  }
+  initIcons();
+}
+
+async function loadAdminAccounts() {
+  const uTbody = document.getElementById('admin-users-tbody');
+  const pTbody = document.getElementById('admin-players-tbody');
+  if (uTbody) {
+    uTbody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-slate-400 text-xs"><div class="inline-block w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mr-2"></div>Loading accounts...</td></tr>`;
+  }
+  if (pTbody) {
+    pTbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-400 text-xs"><div class="inline-block w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mr-2"></div>Loading players...</td></tr>`;
+  }
+
+  try {
+    const res = await fetch('/api/admin/accounts');
+    if (!res.ok) {
+      showToast("Failed to load admin accounts data.", "error");
+      return;
+    }
+    const data = await res.json();
+    adminData.accounts = data;
+
+    const users = data.users || [];
+    const players = data.players || [];
+    const unlinkedPlayers = players.filter(p => !p.user_id);
+
+    // 1. Render Google Users Table
+    if (uTbody) {
+      if (users.length === 0) {
+        uTbody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-slate-500 text-xs font-bold">No registered Google users found.</td></tr>`;
+      } else {
+        uTbody.innerHTML = users.map(u => {
+          const lp = u.linked_player;
+          let linkStatus = '';
+          let actionBtn = '';
+
+          if (lp) {
+            linkStatus = `
+              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <i data-lucide="check" class="w-3 h-3 text-emerald-400"></i>
+                <span>${lp.nickname} (HCP: ${lp.current_handicap != null ? Number(lp.current_handicap).toFixed(1) : '-'})</span>
+              </span>
+            `;
+            actionBtn = `
+              <button type="button" onclick="adminUnlinkPlayer('${lp.id}')" class="py-1 px-2.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-700/50 text-rose-300 font-bold text-[11px] transition shadow-sm">
+                Unlink
+              </button>
+            `;
+          } else {
+            linkStatus = `<span class="text-slate-500 text-[11px] italic">Not linked</span>`;
+            actionBtn = `
+              <div class="flex items-center justify-end gap-1.5">
+                <select id="admin-user-link-select-${u.id}" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-white font-bold text-[11px] max-w-[140px]">
+                  <option value="">-- Select Player --</option>
+                  ${unlinkedPlayers.map(p => `<option value="${p.id}">${p.nickname} (${p.first_name || ''} ${p.last_name || ''})</option>`).join('')}
+                </select>
+                <button type="button" onclick="adminLinkUser('${u.id}', 'admin-user-link-select-${u.id}')" class="py-1 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow-sm">
+                  Link
+                </button>
+              </div>
+            `;
+          }
+
+          return `
+            <tr class="hover:bg-slate-800/40 transition">
+              <td class="py-2.5 px-3 font-bold text-white text-xs">${u.name || '-'}</td>
+              <td class="py-2.5 px-3 text-slate-300 font-mono text-xs">${u.email || '-'}</td>
+              <td class="py-2.5 px-3">${linkStatus}</td>
+              <td class="py-2.5 px-3 text-right">${actionBtn}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    // 2. Render Players Directory Table
+    if (pTbody) {
+      if (players.length === 0) {
+        pTbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-500 text-xs font-bold">No players found in database.</td></tr>`;
+      } else {
+        pTbody.innerHTML = players.map(p => {
+          const lu = p.linked_user;
+          const userStr = lu ? `<span class="text-emerald-400 font-mono text-[11px]">${lu.email}</span>` : `<span class="text-slate-500 text-[11px] italic">None</span>`;
+          const hcpStr = p.current_handicap != null ? Number(p.current_handicap).toFixed(1) : '-';
+          const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ') || '-';
+          const safeNick = (p.nickname || '').replace(/'/g, "\\'");
+
+          return `
+            <tr class="hover:bg-slate-800/40 transition">
+              <td class="py-2.5 px-3 font-black text-amber-400 text-xs">${p.nickname}</td>
+              <td class="py-2.5 px-3 text-slate-300 text-xs">${fullName}</td>
+              <td class="py-2.5 px-3 text-slate-400 font-mono text-xs">${p.email || '-'}</td>
+              <td class="py-2.5 px-3 text-center font-mono font-bold text-white text-xs">${hcpStr}</td>
+              <td class="py-2.5 px-3">${userStr}</td>
+              <td class="py-2.5 px-3 text-right">
+                <button type="button" onclick="adminDeletePlayer('${p.id}', '${safeNick}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete player permanently">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    initIcons();
+  } catch (err) {
+    console.error("Admin load accounts error:", err);
+    showToast("Network error loading admin accounts.", "error");
+  }
+}
+
+async function adminLinkUser(userId, selectElemId) {
+  const sel = document.getElementById(selectElemId);
+  const playerId = sel ? sel.value : null;
+  if (!playerId) {
+    showToast("Please select a player to link.", "warning");
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/admin/link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, player_id: playerId })
+    });
+    if (res.ok) {
+      showToast("Account linked successfully!");
+      await loadAdminAccounts();
+      await fetchCurrentUser();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to link account.", "error");
+    }
+  } catch (err) {
+    console.error("Error linking account:", err);
+    showToast("Network error linking account.", "error");
+  }
+}
+
+async function adminUnlinkPlayer(playerId) {
+  if (!confirm("Are you sure you want to unlink this user account from this player profile?")) return;
+
+  try {
+    const res = await fetch('/api/admin/unlink', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_id: playerId })
+    });
+    if (res.ok) {
+      showToast("Player unlinked successfully.");
+      await loadAdminAccounts();
+      await fetchCurrentUser();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to unlink player.", "error");
+    }
+  } catch (err) {
+    console.error("Error unlinking player:", err);
+    showToast("Network error unlinking player.", "error");
+  }
+}
+
+async function adminDeletePlayer(playerId, playerName) {
+  if (!confirm(`Are you sure you want to PERMANENTLY delete player "${playerName}" from the database?\nThis will remove them from all rosters and scoring histories.`)) return;
+
+  try {
+    const res = await fetch(`/api/admin/players/${encodeURIComponent(playerId)}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      showToast(`Player "${playerName}" permanently deleted.`);
+      await loadAdminAccounts();
+      await fetchAndRenderPlayerStats();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to delete player.", "error");
+    }
+  } catch (err) {
+    console.error("Error deleting player:", err);
+    showToast("Network error deleting player.", "error");
+  }
+}
+
+async function initAdminManualRoundForm() {
+  const dateInput = document.getElementById('admin-manual-date');
+  if (dateInput && !dateInput.value) {
+    dateInput.value = new Date().toISOString().substring(0, 10);
+  }
+
+  // 1. Populate courses
+  if (!state.coursesCatalog || state.coursesCatalog.length === 0) {
+    await fetchCourses();
+  }
+  const courseSelect = document.getElementById('admin-manual-course');
+  if (courseSelect && state.coursesCatalog) {
+    courseSelect.innerHTML = state.coursesCatalog.map(c => `
+      <option value="${c.id}">${c.name || 'Golf Course'}</option>
+    `).join('');
+  }
+  onAdminManualCourseChange();
+
+  // 2. Populate player dropdown from catalog
+  const pSelect = document.getElementById('admin-manual-add-player-select');
+  if (pSelect) {
+    let allPlayers = adminData.accounts.players;
+    if (!allPlayers || allPlayers.length === 0) {
+      const res = await fetch('/api/players');
+      if (res.ok) allPlayers = await res.json();
+    }
+    pSelect.innerHTML = (allPlayers || []).map(p => `
+      <option value="${p.id}">${p.nickname} (${p.first_name || ''} ${p.last_name || ''})</option>
+    `).join('');
+  }
+
+  renderAdminManualLineup();
+}
+
+function onAdminManualCourseChange() {
+  const cSelect = document.getElementById('admin-manual-course');
+  const tSelect = document.getElementById('admin-manual-tee');
+  if (!cSelect || !tSelect || !state.coursesCatalog) return;
+
+  const cId = cSelect.value;
+  const course = state.coursesCatalog.find(c => c.id === cId) || state.coursesCatalog[0];
+  const tees = (course && course.tees) || [
+    { name: "White", course_rating: 71.5, slope_rating: 126 },
+    { name: "Blue", course_rating: 73.0, slope_rating: 131 },
+    { name: "Yellow", course_rating: 70.1, slope_rating: 122 },
+    { name: "Red", course_rating: 68.4, slope_rating: 118 },
+    { name: "Black", course_rating: 74.8, slope_rating: 137 }
+  ];
+
+  tSelect.innerHTML = tees.map(t => `
+    <option value="${t.name}" ${t.name.toLowerCase() === 'white' ? 'selected' : ''}>
+      ${t.name} (Rating: ${t.course_rating || 72.0}, Slope: ${t.slope_rating || 113})
+    </option>
+  `).join('');
+}
+
+function addPlayerToAdminManualLineup() {
+  const pSelect = document.getElementById('admin-manual-add-player-select');
+  if (!pSelect || !pSelect.value) return;
+
+  const pId = pSelect.value;
+  if (adminData.manualLineup.some(p => p.player_id === pId)) {
+    showToast("Player is already in this lineup.", "warning");
+    return;
+  }
+
+  const pName = pSelect.options[pSelect.selectedIndex].text.split('(')[0].trim();
+  adminData.manualLineup.push({
+    player_id: pId,
+    name: pName,
+    gross_score: "",
+    cash_won_lost: 0
+  });
+
+  renderAdminManualLineup();
+}
+
+function removePlayerFromAdminManualLineup(playerId) {
+  adminData.manualLineup = adminData.manualLineup.filter(p => p.player_id !== playerId);
+  renderAdminManualLineup();
+}
+
+function updateLineupScore(playerId, val) {
+  const p = adminData.manualLineup.find(x => x.player_id === playerId);
+  if (p) p.gross_score = val.trim();
+}
+
+function updateLineupCash(playerId, val) {
+  const p = adminData.manualLineup.find(x => x.player_id === playerId);
+  if (p) p.cash_won_lost = Number(val) || 0;
+}
+
+function renderAdminManualLineup() {
+  const tbody = document.getElementById('admin-manual-lineup-tbody');
+  const emptyEl = document.getElementById('admin-manual-empty-lineup');
+  if (!tbody) return;
+
+  if (adminData.manualLineup.length === 0) {
+    tbody.innerHTML = '';
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    return;
+  }
+
+  if (emptyEl) emptyEl.classList.add('hidden');
+
+  tbody.innerHTML = adminData.manualLineup.map((p, idx) => `
+    <tr class="hover:bg-slate-800/40 transition">
+      <td class="py-2.5 px-3">
+        <div class="flex items-center gap-2">
+          <span class="w-6 h-6 rounded-lg bg-slate-800 text-amber-400 font-black text-xs flex items-center justify-center">${idx + 1}</span>
+          <span class="font-black text-white text-xs">${p.name}</span>
+        </div>
+      </td>
+      <td class="py-2.5 px-3">
+        <input type="number" min="40" max="150" placeholder="Blank = exempt" value="${p.gross_score}" onchange="updateLineupScore('${p.player_id}', this.value)" class="w-32 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-white font-mono text-xs focus:ring-1 focus:ring-sky-500">
+      </td>
+      <td class="py-2.5 px-3">
+        <input type="number" placeholder="0" value="${p.cash_won_lost}" onchange="updateLineupCash('${p.player_id}', this.value)" class="w-32 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-white font-mono text-xs focus:ring-1 focus:ring-sky-500">
+      </td>
+      <td class="py-2.5 px-3 text-center">
+        <button type="button" onclick="removePlayerFromAdminManualLineup('${p.player_id}')" class="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </td>
+    </tr>
+  `).join('');
+
+  initIcons();
+}
+
+async function submitAdminManualRound() {
+  if (adminData.manualLineup.length === 0) {
+    showToast("Please add at least one player to the round.", "warning");
+    return;
+  }
+
+  const courseId = document.getElementById('admin-manual-course')?.value;
+  const teeName = document.getElementById('admin-manual-tee')?.value || 'White';
+  const dateStr = document.getElementById('admin-manual-date')?.value || new Date().toISOString().substring(0, 10);
+  const currency = document.getElementById('admin-manual-currency')?.value || 'THB';
+
+  const payload = {
+    course_id: courseId,
+    tee_name: teeName,
+    date_str: dateStr,
+    currency: currency,
+    players: adminData.manualLineup.map(p => ({
+      player_id: p.player_id,
+      gross_score: p.gross_score === "" || p.gross_score == null ? null : Number(p.gross_score),
+      cash_won_lost: Number(p.cash_won_lost || 0)
+    }))
+  };
+
+  try {
+    const res = await fetch('/api/admin/manual-rounds', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      showToast("Manual round created successfully!");
+      adminData.manualLineup = [];
+      closeAdminModal();
+      await openSavedRound(data.round_id);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to create manual round.", "error");
+    }
+  } catch (err) {
+    console.error("Error creating manual round:", err);
+    showToast("Network error creating manual round.", "error");
+  }
+}
+
+async function loadAdminAllRounds() {
+  const tbody = document.getElementById('admin-rounds-tbody');
+  if (tbody) {
+    tbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-400 text-xs"><div class="inline-block w-4 h-4 border-2 border-rose-400 border-t-transparent rounded-full animate-spin mr-2"></div>Loading all rounds...</td></tr>`;
+  }
+
+  try {
+    const res = await fetch('/api/admin/all-rounds');
+    if (!res.ok) {
+      showToast("Failed to load rounds.", "error");
+      return;
+    }
+    const rounds = await res.json();
+    adminData.allRounds = rounds;
+
+    if (tbody) {
+      if (rounds.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-500 text-xs font-bold">No rounds recorded in database.</td></tr>`;
+      } else {
+        tbody.innerHTML = rounds.map(r => {
+          const typeBadge = r.is_manual
+            ? `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-sky-500/20 text-sky-300 border border-sky-400/40">MANUAL</span>`
+            : `<span class="px-2 py-0.5 rounded text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">LIVE</span>`;
+
+          const safeName = (r.name || 'Round').replace(/'/g, "\\'");
+          const playersStr = Array.isArray(r.player_names) && r.player_names.length > 0
+            ? `${r.players_count} (${r.player_names.slice(0, 3).join(', ')}${r.players_count > 3 ? '...' : ''})`
+            : `${r.players_count || 0}`;
+
+          return `
+            <tr class="hover:bg-slate-800/40 transition">
+              <td class="py-2.5 px-3">
+                <div class="font-bold text-white text-xs">${r.date_str || '-'}</div>
+                <div class="text-[11px] text-slate-400 truncate max-w-xs">${r.name || '-'}</div>
+              </td>
+              <td class="py-2.5 px-3 text-slate-300 text-xs">${r.course_name || 'Golf Course'}</td>
+              <td class="py-2.5 px-3">
+                <div class="font-bold text-white text-xs">${r.creator_name || '-'}</div>
+                <div class="text-[10px] text-slate-500 font-mono">${r.creator_email || '-'}</div>
+              </td>
+              <td class="py-2.5 px-3 text-center">${typeBadge}</td>
+              <td class="py-2.5 px-3 text-center text-slate-300 text-xs">${playersStr}</td>
+              <td class="py-2.5 px-3 text-right">
+                <button type="button" onclick="adminDeleteRound('${r.id}', '${safeName}')" class="p-1 rounded-lg hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition" title="Delete round permanently">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    initIcons();
+  } catch (err) {
+    console.error("Error loading all rounds:", err);
+    showToast("Network error loading rounds.", "error");
+  }
+}
+
+async function adminDeleteRound(roundId, roundName) {
+  if (!confirm(`Are you sure you want to PERMANENTLY delete round "${roundName}"?\nThis will remove the round from the database and recalculate WHS handicaps for all affected players.`)) return;
+
+  try {
+    const res = await fetch(`/api/admin/rounds/${encodeURIComponent(roundId)}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      showToast("Round permanently deleted and handicaps recalculated.");
+      await loadAdminAllRounds();
+      if (roundId === state.roundId) {
+        window.location.href = '/';
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || "Failed to delete round.", "error");
+    }
+  } catch (err) {
+    console.error("Error deleting round:", err);
+    showToast("Network error deleting round.", "error");
   }
 }

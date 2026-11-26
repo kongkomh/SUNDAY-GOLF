@@ -33,6 +33,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
 
+ADMIN_EMAILS = {"kongkomh@gmail.com"}
+
+def is_admin(user: Optional[Dict[str, Any]]) -> bool:
+    if not user:
+        return False
+    email = (user.get("email") or "").strip().lower()
+    return email in ADMIN_EMAILS
+
 
 def copy_dict(d):
     return json.loads(json.dumps(d))
@@ -132,6 +140,7 @@ class RoundManager:
         state["creator_name"] = creator_first
         state["owner_id"] = round_data.get("owner_id")
         state["is_finished"] = bool(round_data.get("is_finished", False))
+        state["is_manual"] = bool(round_data.get("is_manual", False))
         state["is_owner"] = bool(user_id and round_data.get("owner_id") and user_id == round_data.get("owner_id"))
         state["starting_hole"] = round_data.get("starting_hole", 1)
         state["selected_tee"] = round_data.get("selected_tee") or DEFAULT_TEES[2]
@@ -556,7 +565,8 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
                     "authenticated": True,
                     "user": user,
                     "player": linked_p,
-                    "needs_player_link": (linked_p is None)
+                    "needs_player_link": (linked_p is None),
+                    "is_admin": is_admin(user)
                 })
             else:
                 self.send_json_response({
@@ -564,6 +574,7 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
                     "user": None,
                     "player": None,
                     "needs_player_link": False,
+                    "is_admin": False,
                     "google_configured": auth.is_google_oauth_configured()
                 })
             return
@@ -622,6 +633,24 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
                         db.update_round(curr_rid, {"owner_id": user_id})
                 rounds = db.list_user_rounds(user_id)
                 self.send_json_response(rounds)
+            return
+
+        # Admin: Get accounts & players
+        if path == "/api/admin/accounts":
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            accounts = db.admin_get_accounts()
+            self.send_json_response(accounts)
+            return
+
+        # Admin: Get all rounds
+        if path == "/api/admin/all-rounds":
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            rounds = db.admin_get_all_rounds()
+            self.send_json_response(rounds)
             return
 
         # 8. Round State API: /api/round/<round_id> or legacy /api/tournament
@@ -751,7 +780,9 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
 
             existing = db.check_player_exists(nick, first_name, last_name)
             if existing:
-                self.send_json_response({"error": f"A player with nickname '{nick}' already exists."}, status=409)
+                # Link user to the existing matching player rather than failing or creating duplicate!
+                linked = db.link_user_to_existing_player(user_id, existing["id"], user.get("name") or nick, email)
+                self.send_json_response({"status": "ok", "player": linked})
                 return
 
             new_p = db.create_player(nick, first_name, last_name, email=email, user_id=user_id, current_handicap=hcp)
@@ -769,6 +800,60 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
                 return
             updated_p = db.update_player_profile(linked_p["id"], body)
             self.send_json_response({"status": "ok", "player": updated_p})
+            return
+
+        # Admin: Link account to player
+        if path == "/api/admin/link":
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            target_user_id = (body.get("user_id") or "").strip()
+            target_player_id = (body.get("player_id") or "").strip()
+            if not target_user_id or not target_player_id:
+                self.send_json_response({"error": "user_id and player_id are required"}, status=400)
+                return
+            linked = db.admin_link_user_to_player(target_user_id, target_player_id)
+            if not linked:
+                self.send_json_response({"error": "User or Player not found"}, status=404)
+                return
+            self.send_json_response({"status": "ok", "player": linked})
+            return
+
+        # Admin: Unlink player account
+        if path == "/api/admin/unlink":
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            target_player_id = (body.get("player_id") or "").strip()
+            if not target_player_id:
+                self.send_json_response({"error": "player_id is required"}, status=400)
+                return
+            success = db.admin_unlink_player(target_player_id)
+            self.send_json_response({"status": "ok", "success": success})
+            return
+
+        # Admin: Create Manual Round
+        if path == "/api/admin/manual-rounds":
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            c_id = body.get("course_id") or "course-krungthep-kreetha"
+            tee_name = body.get("tee_name") or "White"
+            date_str = body.get("date_str") or time.strftime("%Y-%m-%d")
+            currency = body.get("currency") or "THB"
+            players_data = body.get("players") or []
+            if not players_data:
+                self.send_json_response({"error": "At least one player is required"}, status=400)
+                return
+            rnd = db.admin_create_manual_round(
+                admin_user_id=user["id"],
+                course_id=c_id,
+                tee_name=tee_name,
+                date_str=date_str,
+                currency=currency,
+                players_data=players_data
+            )
+            self.send_json_response({"status": "ok", "round": rnd, "round_id": rnd["id"]})
             return
 
         # 2. Create New Round
@@ -918,6 +1003,28 @@ class SundayGolfRequestHandler(http.server.BaseHTTPRequestHandler):
             ply_id = path.replace("/api/my-players/", "").strip("/")
             if ply_id and user_id:
                 db.remove_user_player(user_id, ply_id)
+            self.send_json_response({"status": "ok", "success": True})
+            return
+
+        # Admin: Delete player permanently
+        if path.startswith("/api/admin/players/"):
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            target_pid = path.replace("/api/admin/players/", "").strip("/")
+            if target_pid:
+                db.admin_delete_player(target_pid)
+            self.send_json_response({"status": "ok", "success": True})
+            return
+
+        # Admin: Delete any round permanently
+        if path.startswith("/api/admin/rounds/"):
+            if not is_admin(user):
+                self.send_json_response({"error": "Admin access required"}, status=403)
+                return
+            target_rid = path.replace("/api/admin/rounds/", "").strip("/")
+            if target_rid:
+                db.delete_round(target_rid)
             self.send_json_response({"status": "ok", "success": True})
             return
 

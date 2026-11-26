@@ -204,10 +204,10 @@ class Database:
             player_id VARCHAR(255) NOT NULL,
             round_id VARCHAR(255) NOT NULL,
             round_date VARCHAR(64) NOT NULL,
-            gross_score INTEGER NOT NULL,
-            course_rating REAL NOT NULL,
-            slope_rating REAL NOT NULL,
-            differential REAL NOT NULL,
+            gross_score INTEGER,
+            course_rating REAL,
+            slope_rating REAL,
+            differential REAL,
             created_at REAL
         );
         """
@@ -219,6 +219,7 @@ class Database:
         for alter_q in [
             "ALTER TABLE courses ADD COLUMN tees TEXT;",
             "ALTER TABLE rounds ADD COLUMN selected_tee TEXT;",
+            "ALTER TABLE rounds ADD COLUMN is_manual INTEGER DEFAULT 0;",
             "ALTER TABLE player_round_history ADD COLUMN course_name VARCHAR(255);",
             "ALTER TABLE player_round_history ADD COLUMN cash_won REAL DEFAULT 0.0;",
             "ALTER TABLE player_round_history ADD COLUMN currency VARCHAR(10) DEFAULT 'THB';"
@@ -228,12 +229,85 @@ class Database:
             except Exception:
                 pass
 
+        # Ensure player_round_history columns are nullable for blank gross scores
+        if self.is_postgres:
+            for col in ["gross_score", "course_rating", "slope_rating", "differential"]:
+                try:
+                    self.execute(f"ALTER TABLE player_round_history ALTER COLUMN {col} DROP NOT NULL;")
+                except Exception:
+                    pass
+        else:
+            try:
+                t_info = self.query_all("PRAGMA table_info(player_round_history);")
+                if any(c.get("name") == "gross_score" and c.get("notnull") == 1 for c in t_info):
+                    self.execute("""
+                    CREATE TABLE player_round_history_temp (
+                        id VARCHAR(255) PRIMARY KEY,
+                        player_id VARCHAR(255) NOT NULL,
+                        round_id VARCHAR(255) NOT NULL,
+                        round_date VARCHAR(64) NOT NULL,
+                        gross_score INTEGER,
+                        course_rating REAL,
+                        slope_rating REAL,
+                        differential REAL,
+                        created_at REAL,
+                        course_name VARCHAR(255),
+                        cash_won REAL DEFAULT 0.0,
+                        currency VARCHAR(10) DEFAULT 'THB'
+                    );
+                    """)
+                    self.execute("INSERT INTO player_round_history_temp SELECT id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, created_at, course_name, cash_won, currency FROM player_round_history;")
+                    self.execute("DROP TABLE player_round_history;")
+                    self.execute("ALTER TABLE player_round_history_temp RENAME TO player_round_history;")
+            except Exception as e:
+                print(f"[DB MIG ERROR] {e}")
+
         # Clean up any dummy seed players ('PLAYER 1' .. 'PLAYER 6')
         try:
             self.execute("DELETE FROM user_players WHERE player_id IN ('ply-p1', 'ply-p2', 'ply-p3', 'ply-p4', 'ply-p5', 'ply-p6');")
             self.execute("DELETE FROM players WHERE id IN ('ply-p1', 'ply-p2', 'ply-p3', 'ply-p4', 'ply-p5', 'ply-p6') OR nickname LIKE 'PLAYER %';")
         except Exception:
             pass
+
+        # Deduplicate players sharing identical full names (first_name + last_name)
+        try:
+            name_dups = self.query_all(
+                "SELECT LOWER(first_name) as fn, LOWER(last_name) as ln, COUNT(*) as cnt FROM players WHERE first_name != '' AND last_name != '' GROUP BY LOWER(first_name), LOWER(last_name) HAVING cnt > 1;"
+            )
+            for nd in name_dups:
+                matches = self.query_all(
+                    "SELECT * FROM players WHERE LOWER(first_name) = ? AND LOWER(last_name) = ? ORDER BY created_at ASC;",
+                    (nd["fn"], nd["ln"])
+                )
+                if len(matches) > 1:
+                    scored = []
+                    for m in matches:
+                        hist_cnt = self.query_one("SELECT COUNT(*) as cnt FROM player_round_history WHERE player_id = ?;", (m["id"],))
+                        h_count = hist_cnt.get("cnt", 0) if hist_cnt else 0
+                        score = (20 if h_count > 0 else 0) + (10 if m.get("user_id") else 0) + (5 if m.get("email") else 0)
+                        scored.append((score, h_count, m))
+                    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+                    best_match = scored[0][2]
+                    duplicates = [s[2] for s in scored[1:]]
+
+                    chosen_user_id = best_match.get("user_id") or next((d.get("user_id") for d in duplicates if d.get("user_id")), None)
+                    chosen_email = best_match.get("email") or next((d.get("email") for d in duplicates if d.get("email")), None)
+                    if chosen_user_id != best_match.get("user_id") or chosen_email != best_match.get("email"):
+                        self.execute("UPDATE players SET user_id = ?, email = ? WHERE id = ?;", (chosen_user_id, chosen_email, best_match["id"]))
+
+                    for dup in duplicates:
+                        try:
+                            self.execute("UPDATE user_players SET player_id = ? WHERE player_id = ?;", (best_match["id"], dup["id"]))
+                        except Exception:
+                            self.execute("DELETE FROM user_players WHERE player_id = ?;", (dup["id"],))
+                        try:
+                            self.execute("UPDATE player_round_history SET player_id = ? WHERE player_id = ?;", (best_match["id"], dup["id"]))
+                        except Exception:
+                            pass
+                        self.execute("DELETE FROM players WHERE id = ?;", (dup["id"],))
+                        print(f"[DEDUP] Merged duplicate player '{dup['nickname']}' ({dup['id']}) into '{best_match['nickname']}' ({best_match['id']})")
+        except Exception as e:
+            print(f"[DEDUP ERROR] {e}")
 
         db_type = "PostgreSQL" if self.is_postgres else f"SQLite ({SQLITE_DB_PATH})"
         print(f"[DB INIT] Database initialized successfully using {db_type}")
@@ -448,6 +522,7 @@ class Database:
             row["selected_tee"] = DEFAULT_TEES[2]
 
         row["is_finished"] = bool(row.get("is_finished", 0))
+        row["is_manual"] = bool(row.get("is_manual", 0))
         return row
 
     def list_user_rounds(self, user_id: str) -> List[Dict[str, Any]]:
@@ -482,6 +557,7 @@ class Database:
                     except Exception:
                         r["selected_tee"] = DEFAULT_TEES[2]
                 r["is_finished"] = bool(r.get("is_finished", 0))
+                r["is_manual"] = bool(r.get("is_manual", 0))
                 r["is_owner"] = is_owner
                 date_val = r.get("created_at") or time.time()
                 r["date_str"] = time.strftime("%Y-%m-%d", time.localtime(date_val)) if isinstance(date_val, (int, float)) else str(date_val)[:10]
@@ -566,7 +642,13 @@ class Database:
         return self.get_round(round_id)
 
     def delete_round(self, round_id: str) -> bool:
+        # Find affected players to recalculate handicaps
+        history_rows = self.query_all("SELECT DISTINCT player_id FROM player_round_history WHERE round_id = ?", (round_id,))
+        player_ids = [r["player_id"] for r in history_rows if r.get("player_id")]
+        self.execute("DELETE FROM player_round_history WHERE round_id = ?", (round_id,))
         self.execute("DELETE FROM rounds WHERE id = ?", (round_id,))
+        for pid in player_ids:
+            self.recalculate_player_handicap(pid)
         return True
 
     # ================= PLAYERS & USER_PLAYERS CRUD =================
@@ -634,8 +716,21 @@ class Database:
         first_name = parts[0] if parts else name
         last_name = " ".join(parts[1:]) if len(parts) > 1 else ""
 
+        if not p and first_name and last_name:
+            # Fallback 1: match by first_name and last_name
+            p = self.query_one(
+                "SELECT * FROM players WHERE LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?)",
+                (first_name.strip(), last_name.strip())
+            )
+        if not p and parts:
+            # Fallback 2: match by nickname
+            p = self.query_one(
+                "SELECT * FROM players WHERE LOWER(nickname) = LOWER(?)",
+                (parts[0].strip(),)
+            )
+
         if p:
-            self.execute("UPDATE players SET user_id = ?, first_name = ?, last_name = ?, updated_at = ? WHERE id = ?", (user_id, first_name, last_name, now, p["id"]))
+            self.execute("UPDATE players SET user_id = ?, email = ?, first_name = ?, last_name = ?, updated_at = ? WHERE id = ?", (user_id, email, first_name, last_name, now, p["id"]))
             self.add_user_player(user_id, p["id"])
             return self.get_player(p["id"])
         return None
@@ -758,13 +853,15 @@ class Database:
                 "handicap": p.get("current_handicap", 18.0),
                 "rounds_played": 0,
                 "total_cash": 0.0,
+                "total_cash_won_lost": 0.0,
                 "target_currency": target_currency
             } for p in roster
         }
 
-        # Index roster by nicknames and emails for cross-round matching
-        nick_to_id = {p["nickname"].strip().lower(): p["id"] for p in roster}
+        # Index roster by nicknames, full names, and emails for robust cross-round matching
+        nick_to_id = {p["nickname"].strip().lower(): p["id"] for p in roster if p.get("nickname")}
         email_to_id = {p["email"].strip().lower(): p["id"] for p in roster if p.get("email")}
+        name_to_id = {f"{p.get('first_name', '')} {p.get('last_name', '')}".strip().lower(): p["id"] for p in roster if p.get("first_name")}
 
         for r_row in rounds_rows:
             try:
@@ -780,20 +877,28 @@ class Database:
                 round_curr = (r_data.get("game_settings", {}).get("currency") or "THB").upper()
                 calc_state = calculate_tournament_state(r_data)
                 scorecards = calc_state.get("player_scorecards", [])
+                rnd_players = {p.get("id"): p.get("player_id") for p in r_data.get("players", []) if isinstance(p, dict)}
 
                 for sc in scorecards:
                     sc_name = (sc.get("name") or "").strip().lower()
+                    sc_slot_id = sc.get("id")
                     matched_ply_id = None
+
                     if sc.get("player_id") in player_stats_map:
                         matched_ply_id = sc.get("player_id")
+                    elif sc_slot_id and sc_slot_id in rnd_players and rnd_players[sc_slot_id] in player_stats_map:
+                        matched_ply_id = rnd_players[sc_slot_id]
                     elif sc_name in nick_to_id:
                         matched_ply_id = nick_to_id[sc_name]
+                    elif sc_name in name_to_id:
+                        matched_ply_id = name_to_id[sc_name]
 
                     if matched_ply_id and matched_ply_id in player_stats_map:
                         cash = float(sc.get("total_cash", 0.0))
                         conv_cash = convert_currency(cash, round_curr, target_currency)
                         player_stats_map[matched_ply_id]["rounds_played"] += 1
                         player_stats_map[matched_ply_id]["total_cash"] += conv_cash
+                        player_stats_map[matched_ply_id]["total_cash_won_lost"] += conv_cash
             except Exception as e:
                 print(f"[STATS ERROR] Calculating round {r_row.get('id')}: {e}")
 
@@ -866,28 +971,35 @@ class Database:
                         (hist_id, player_db_id, round_id, round_date, int(gross), course_rating, slope_rating, differential, c_title, cash_val, curr_str, now)
                     )
 
-                # Query last 20 score differentials
-                history_rows = self.query_all(
-                    "SELECT differential FROM player_round_history WHERE player_id = ? ORDER BY round_date DESC, created_at DESC LIMIT 20",
-                    (player_db_id,)
-                )
-                diffs = [float(r["differential"]) for r in history_rows]
-                diffs.sort()
-                count = len(diffs)
-                new_hcp = calculate_whs_handicap(diffs)
-                if new_hcp is not None:
-                    self.execute(
-                        "UPDATE players SET current_handicap = ?, updated_at = ? WHERE id = ?",
-                        (new_hcp, now, player_db_id)
-                    )
-                    print(f"[WHS HCP] Updated {p_record['nickname']} handicap to {new_hcp} (USGA Rule 5.2a using {count} rounds).")
-                else:
-                    print(f"[WHS HCP] {p_record['nickname']} has {count} round(s) recorded (minimum 3 required for official Handicap Index).")
+                self.recalculate_player_handicap(player_db_id)
+
+    def recalculate_player_handicap(self, player_id: str) -> Optional[float]:
+        """
+        Recalculates player's WHS Handicap Index from their last 20 rounds with valid differentials.
+        """
+        history_rows = self.query_all(
+            "SELECT differential FROM player_round_history WHERE player_id = ? AND differential IS NOT NULL ORDER BY round_date DESC, created_at DESC LIMIT 20",
+            (player_id,)
+        )
+        diffs = [float(r["differential"]) for r in history_rows if r.get("differential") is not None]
+        diffs.sort()
+        count = len(diffs)
+        new_hcp = calculate_whs_handicap(diffs)
+        now = time.time()
+        if new_hcp is not None:
+            self.execute(
+                "UPDATE players SET current_handicap = ?, updated_at = ? WHERE id = ?",
+                (new_hcp, now, player_id)
+            )
+            print(f"[WHS HCP] Updated player {player_id} handicap to {new_hcp} (USGA Rule 5.2a using {count} rounds).")
+            return new_hcp
+        return None
 
     def get_player_rounds_history(self, player_id: str) -> List[Dict[str, Any]]:
         """
         Retrieves up to 20 past rounds for a player with:
         Date, course, raw score, handicap differential, counting flag (is_counting), and cash won.
+        Blank gross scores/differentials are properly excluded from counting.
         """
         rows = self.query_all(
             "SELECT * FROM player_round_history WHERE player_id = ? ORDER BY round_date DESC, created_at DESC LIMIT 20",
@@ -901,19 +1013,22 @@ class Database:
                 rnd = self.get_round(r["round_id"])
                 if rnd:
                     c_name = rnd.get("course_name")
+            gross = r.get("gross_score")
+            diff = r.get("differential")
             items.append({
                 "id": r["id"],
                 "round_id": r["round_id"],
                 "round_date": r["round_date"],
                 "course_name": c_name or "Golf Course",
-                "gross_score": int(r.get("gross_score", 0)),
-                "differential": float(r.get("differential", 0.0)),
+                "gross_score": int(gross) if gross is not None else None,
+                "differential": float(diff) if diff is not None else None,
                 "cash_won": float(r.get("cash_won") or 0.0),
                 "currency": r.get("currency") or "THB"
             })
 
         # Determine which differentials count towards handicap per USGA Rule 5.2a
-        n = len(items)
+        valid_indices_and_items = [(i, itm) for i, itm in enumerate(items) if itm.get("differential") is not None]
+        n = len(valid_indices_and_items)
         if n < 3:
             k = 0
         elif 3 <= n <= 5:
@@ -934,12 +1049,219 @@ class Database:
             k = 8
 
         # Lowest k differentials count
-        indexed = sorted(enumerate(items), key=lambda x: x[1]["differential"])
-        counting_indices = set(idx for idx, _ in indexed[:k])
+        valid_sorted = sorted(valid_indices_and_items, key=lambda x: x[1]["differential"])
+        counting_indices = set(idx for idx, _ in valid_sorted[:k])
         for i, itm in enumerate(items):
             itm["is_counting"] = (i in counting_indices)
 
         return items
+
+    # ================= ADMIN OPERATIONS =================
+    def admin_get_accounts(self) -> Dict[str, Any]:
+        """Returns all Google user accounts and player profiles with link mapping."""
+        users_rows = self.query_all("SELECT id, email, name, picture, created_at FROM users ORDER BY created_at DESC")
+        players_rows = self.query_all("SELECT id, nickname, first_name, last_name, email, user_id, current_handicap, created_at FROM players ORDER BY nickname ASC")
+
+        user_map = {u["id"]: u for u in users_rows}
+        player_by_user_id = {p["user_id"]: p for p in players_rows if p.get("user_id")}
+
+        formatted_users = []
+        for u in users_rows:
+            u_dict = dict(u)
+            lp = player_by_user_id.get(u["id"])
+            u_dict["linked_player"] = {
+                "id": lp["id"],
+                "nickname": lp["nickname"],
+                "first_name": lp["first_name"],
+                "last_name": lp["last_name"],
+                "current_handicap": lp["current_handicap"]
+            } if lp else None
+            formatted_users.append(u_dict)
+
+        formatted_players = []
+        for p in players_rows:
+            p_dict = dict(p)
+            lu = user_map.get(p.get("user_id")) if p.get("user_id") else None
+            p_dict["linked_user"] = {
+                "id": lu["id"],
+                "email": lu["email"],
+                "name": lu["name"]
+            } if lu else None
+            formatted_players.append(p_dict)
+
+        return {
+            "users": formatted_users,
+            "players": formatted_players
+        }
+
+    def admin_link_user_to_player(self, user_id: str, player_id: str) -> Optional[Dict[str, Any]]:
+        """Links a Google user account to a player profile, updating email and user roster."""
+        u = self.get_user(user_id)
+        p = self.get_player(player_id)
+        if not u or not p:
+            return None
+        now = time.time()
+        # Unlink any other player previously attached to this user
+        self.execute("UPDATE players SET user_id = NULL WHERE user_id = ? AND id != ?", (user_id, player_id))
+        self.execute("UPDATE players SET user_id = ?, email = ?, updated_at = ? WHERE id = ?", (user_id, u["email"], now, player_id))
+        self.add_user_player(user_id, player_id)
+        return self.get_player(player_id)
+
+    def admin_unlink_player(self, player_id: str) -> bool:
+        """Unlinks a player profile from any Google user account."""
+        p = self.get_player(player_id)
+        if not p:
+            return False
+        user_id = p.get("user_id")
+        self.execute("UPDATE players SET user_id = NULL, updated_at = ? WHERE id = ?", (time.time(), player_id))
+        if user_id:
+            self.execute("DELETE FROM user_players WHERE user_id = ? AND player_id = ?", (user_id, player_id))
+        return True
+
+    def admin_delete_player(self, player_id: str) -> bool:
+        """Permanently deletes a player profile from players, user_players, and history."""
+        self.execute("DELETE FROM user_players WHERE player_id = ?", (player_id,))
+        self.execute("DELETE FROM player_round_history WHERE player_id = ?", (player_id,))
+        self.execute("DELETE FROM players WHERE id = ?", (player_id,))
+        return True
+
+    def admin_get_all_rounds(self) -> List[Dict[str, Any]]:
+        """Returns all rounds across all users for admin management."""
+        rows = self.query_all("SELECT * FROM rounds ORDER BY created_at DESC")
+        all_users = {u["id"]: u for u in self.query_all("SELECT id, name, email FROM users")}
+        res = []
+        for r in rows:
+            r_dict = dict(r)
+            for field in ["game_settings", "players", "holes", "scores"]:
+                if isinstance(r_dict.get(field), str):
+                    try:
+                        r_dict[field] = json.loads(r_dict[field])
+                    except Exception:
+                        r_dict[field] = {} if field in ["game_settings", "scores"] else []
+            r_dict["is_finished"] = bool(r_dict.get("is_finished", 0))
+            r_dict["is_manual"] = bool(r_dict.get("is_manual", 0))
+            date_val = r_dict.get("created_at") or time.time()
+            r_dict["date_str"] = time.strftime("%Y-%m-%d", time.localtime(date_val)) if isinstance(date_val, (int, float)) else str(date_val)[:10]
+
+            creator_name = "Unknown"
+            creator_email = "-"
+            if r_dict.get("owner_id"):
+                u = all_users.get(r_dict["owner_id"])
+                if u:
+                    creator_name = u.get("name") or "Golfer"
+                    creator_email = u.get("email") or "-"
+            r_dict["creator_name"] = creator_name
+            r_dict["creator_email"] = creator_email
+            p_list = r_dict.get("players") or []
+            r_dict["players_count"] = len(p_list)
+            r_dict["player_names"] = [p.get("name") for p in p_list if p.get("name")]
+            res.append(r_dict)
+        return res
+
+    def admin_create_manual_round(self, admin_user_id: str, course_id: str, tee_name: str, date_str: str, currency: str, players_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Creates a manual-round in the database, inserting round records and player history.
+        Gross scores calculate differentials and WHS handicap index; blank scores are excluded from handicap.
+        """
+        c = self.get_course(course_id)
+        if not c:
+            all_courses = self.list_courses()
+            c = all_courses[0] if all_courses else {"id": course_id, "name": "Golf Course", "holes": [], "tees": DEFAULT_TEES}
+
+        # Match tee
+        tees = c.get("tees") or DEFAULT_TEES
+        tee_obj = next((t for t in tees if str(t.get("name", "")).strip().lower() == str(tee_name).strip().lower()), None)
+        if not tee_obj:
+            tee_obj = tees[2] if len(tees) > 2 else tees[0]
+
+        course_rating = float(tee_obj.get("course_rating", 71.5))
+        slope_rating = float(tee_obj.get("slope_rating", 126))
+        slope = slope_rating if slope_rating > 0 else 113.0
+        course_name = c.get("name") or "Golf Course"
+
+        now = time.time()
+        try:
+            created_ts = time.mktime(time.strptime(date_str, "%Y-%m-%d")) + 43200.0
+        except Exception:
+            created_ts = now
+
+        round_id = f"manual-round-{int(created_ts)}-{os.urandom(3).hex()}"
+        admin_user = self.get_user(admin_user_id)
+        creator_name = (admin_user.get("name") or "Admin").split()[0] if admin_user else "Admin"
+        round_name = f"{date_str} {course_name} - {creator_name} (Manual)"
+
+        from engine import DEFAULT_PLAYER_COLORS
+        lineup = []
+
+        for idx, p_input in enumerate(players_data):
+            p_db_id = p_input.get("player_id")
+            p_rec = self.get_player(p_db_id)
+            if not p_rec:
+                continue
+
+            raw_gross = p_input.get("gross_score")
+            has_gross = raw_gross is not None and str(raw_gross).strip() != ""
+            gross_score = int(raw_gross) if has_gross else None
+            cash_won_lost = float(p_input.get("cash_won_lost") or 0.0)
+
+            diff_val = round((113.0 / slope) * (float(gross_score) - course_rating), 1) if has_gross else None
+            hist_id = f"diff-{round_id}-{p_db_id}"
+
+            if self.is_postgres:
+                self.execute(
+                    """
+                    INSERT INTO player_round_history 
+                    (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, course_name, cash_won, currency, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        gross_score = EXCLUDED.gross_score,
+                        differential = EXCLUDED.differential,
+                        course_name = EXCLUDED.course_name,
+                        cash_won = EXCLUDED.cash_won,
+                        currency = EXCLUDED.currency
+                    """,
+                    (hist_id, p_db_id, round_id, date_str, gross_score, course_rating, slope_rating, diff_val, course_name, cash_won_lost, currency, now)
+                )
+            else:
+                self.execute(
+                    """
+                    INSERT OR REPLACE INTO player_round_history 
+                    (id, player_id, round_id, round_date, gross_score, course_rating, slope_rating, differential, course_name, cash_won, currency, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (hist_id, p_db_id, round_id, date_str, gross_score, course_rating, slope_rating, diff_val, course_name, cash_won_lost, currency, now)
+                )
+
+            if has_gross:
+                self.recalculate_player_handicap(p_db_id)
+
+            self.add_user_player(admin_user_id, p_db_id)
+
+            lineup.append({
+                "id": f"p{idx+1}",
+                "player_id": p_db_id,
+                "name": p_rec["nickname"],
+                "color": DEFAULT_PLAYER_COLORS[idx % len(DEFAULT_PLAYER_COLORS)],
+                "gross_score": gross_score,
+                "cash_won_lost": cash_won_lost,
+                "default_team": "left" if idx < len(players_data) // 2 else "right"
+            })
+
+        game_settings = {
+            "currency": currency,
+            "is_manual": True,
+            "game_mode": "FREE_FOR_ALL"
+        }
+
+        self.execute(
+            """
+            INSERT INTO rounds 
+            (id, owner_id, name, course_id, course_name, starting_hole, is_finished, is_manual, selected_tee, game_settings, players, holes, scores, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (round_id, admin_user_id, round_name, c.get("id"), course_name, 1, 1, 1, json.dumps(tee_obj), json.dumps(game_settings), json.dumps(lineup), json.dumps(c.get("holes") or []), json.dumps({}), created_ts, created_ts)
+        )
+        return self.get_round(round_id)  # type: ignore
 
 
 def calculate_whs_handicap(diffs: List[float]) -> Optional[float]:

@@ -356,4 +356,106 @@ assert hist_list[0]["course_name"] == "Krungthep Kreetha"
 assert "cash_won" in hist_list[0]
 print(f"PASS: Player history API returns past rounds with counting flags and cash: {len(hist_list)} rounds, counting: {counting_items[0]['differential']}")
 
-print("\nALL 27 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")
+# 28. Verify Admin Access Control & 403 Forbidden for Non-Admin
+r_unauth_admin = invoke_request("GET", "/api/admin/accounts", headers=auth_headers)
+assert r_unauth_admin["status"] == 403
+r_unauth_rounds = invoke_request("GET", "/api/admin/all-rounds", headers=auth_headers)
+assert r_unauth_rounds["status"] == 403
+r_unauth_man = invoke_request("POST", "/api/admin/manual-rounds", body={}, headers=auth_headers)
+assert r_unauth_man["status"] == 403
+print("PASS: Admin endpoints return 403 Forbidden for non-admin user")
+
+# 29. Admin Login & Authorization for kongkomh@gmail.com
+admin_user = db.upsert_user("admin_kong", "kongkomh@gmail.com", "Kongkom Admin", None)
+admin_token = auth.create_session_token(admin_user["id"])
+admin_headers = {"Cookie": f"session_token={admin_token}"}
+r_admin_me = invoke_request("GET", "/api/me", headers=admin_headers)
+assert r_admin_me["status"] == 200
+assert r_admin_me["json"]["is_admin"] is True
+print("PASS: kongkomh@gmail.com authenticated with is_admin: True")
+
+# 30. Admin Accounts & Player Directory API
+r_admin_acc = invoke_request("GET", "/api/admin/accounts", headers=admin_headers)
+assert r_admin_acc["status"] == 200
+assert "users" in r_admin_acc["json"] and "players" in r_admin_acc["json"]
+users_list = r_admin_acc["json"]["users"]
+assert any(u["email"] == "kongkomh@gmail.com" for u in users_list)
+print("PASS: GET /api/admin/accounts lists all registered users and player profiles")
+
+# 31. Admin Link and Unlink User to Player
+p_test = db.create_player("TEST_LINK_PLY", "Test", "Player", None, None, 15.0)
+r_link = invoke_request("POST", "/api/admin/link", body={"user_id": admin_user["id"], "player_id": p_test["id"]}, headers=admin_headers)
+assert r_link["status"] == 200
+assert r_link["json"]["player"]["user_id"] == admin_user["id"]
+# Verify unlink
+r_unlink = invoke_request("POST", "/api/admin/unlink", body={"player_id": p_test["id"]}, headers=admin_headers)
+assert r_unlink["status"] == 200
+p_unlinked = db.get_player(p_test["id"])
+assert p_unlinked["user_id"] is None
+print("PASS: Admin manually link and unlink user accounts to player profiles")
+
+# 32. Admin Create Manual-Round (With Gross Score & Blank Score Handicap Exemption)
+p_scorer = db.create_player("MAN_SCORER", "Man", "Scorer", None, None, 20.0)
+p_blank = db.create_player("MAN_BLANK", "Man", "Blank", None, None, 18.0)
+initial_blank_hcp = p_blank["current_handicap"]
+
+# Insert manual round: Scorer has 82 gross score, Blank has blank (None) gross score
+r_create_man = invoke_request("POST", "/api/admin/manual-rounds", body={
+    "course_id": "course-krungthep-kreetha",
+    "tee_name": "White",
+    "date_str": "2026-11-20",
+    "currency": "THB",
+    "players": [
+        {"player_id": p_scorer["id"], "gross_score": 82, "cash_won_lost": 1500},
+        {"player_id": p_blank["id"], "gross_score": None, "cash_won_lost": -1500}
+    ]
+}, headers=admin_headers)
+assert r_create_man["status"] == 200
+man_rnd_id = r_create_man["json"]["round_id"]
+assert man_rnd_id.startswith("manual-round-")
+
+# Verify Blank player's handicap was NOT modified
+p_blank_after = db.get_player(p_blank["id"])
+assert p_blank_after["current_handicap"] == initial_blank_hcp
+# Verify Blank player's round history has gross_score None and differential None
+blank_hist = db.get_player_rounds_history(p_blank["id"])
+assert len(blank_hist) >= 1
+assert blank_hist[0]["gross_score"] is None
+assert blank_hist[0]["differential"] is None
+assert blank_hist[0]["cash_won"] == -1500.0
+assert blank_hist[0]["is_counting"] is False
+
+# Verify Scorer player has differential calculated
+scorer_hist = db.get_player_rounds_history(p_scorer["id"])
+assert len(scorer_hist) >= 1
+assert scorer_hist[0]["gross_score"] == 82
+assert scorer_hist[0]["differential"] is not None
+assert scorer_hist[0]["cash_won"] == 1500.0
+
+# Verify manual round state
+r_man_state = invoke_request("GET", f"/api/round/{man_rnd_id}", headers=admin_headers)
+assert r_man_state["status"] == 200
+assert r_man_state["json"]["is_manual"] is True
+assert r_man_state["json"]["is_finished"] is True
+assert len(r_man_state["json"]["leaderboard"]) == 2
+print("PASS: Admin manual-round created with gross score calculation and blank score handicap exemption")
+
+# 33. Admin All Rounds Listing & Database Round Deletion
+r_all_rounds = invoke_request("GET", "/api/admin/all-rounds", headers=admin_headers)
+assert r_all_rounds["status"] == 200
+all_r_ids = [r["id"] for r in r_all_rounds["json"]]
+assert man_rnd_id in all_r_ids
+
+# Admin permanently deletes manual round
+r_del_man = invoke_request("DELETE", f"/api/admin/rounds/{man_rnd_id}", headers=admin_headers)
+assert r_del_man["status"] == 200
+assert db.get_round(man_rnd_id) is None
+print("PASS: Admin all-rounds management and database round deletion")
+
+# 34. Admin Delete Player
+r_del_ply = invoke_request("DELETE", f"/api/admin/players/{p_test['id']}", headers=admin_headers)
+assert r_del_ply["status"] == 200
+assert db.get_player(p_test["id"]) is None
+print("PASS: Admin permanently deletes player from database")
+
+print("\nALL 34 BACKEND INTEGRATION TESTS PASSED PERFECTLY!")

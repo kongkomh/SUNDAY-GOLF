@@ -604,9 +604,82 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
     - Points and Cash calculations
     - Momentum tracking and Leaderboard
     """
-    tournament_name = data.get("tournament_name", "Sunday Golf Match")
+    tournament_name = data.get("tournament_name") or data.get("name") or "Sunday Golf Match"
     course_name = data.get("course_name", "Krungthep Kreetha Golf Course")
     course_id = data.get("course_id", "course-krungthep-kreetha")
+
+    # Fast-path calculation for Manual-Rounds (Admin Created)
+    if data.get("is_manual") or (data.get("game_settings") or {}).get("is_manual"):
+        players = data.get("players") or []
+        course_specs = data.get("course_specs") or {"total_par": 72, "out_par": 36, "in_par": 36}
+        total_par = course_specs.get("total_par", 72)
+
+        player_scorecards = []
+        for idx, p in enumerate(players):
+            pid = p.get("id") or f"p{idx+1}"
+            gross = p.get("gross_score")
+            cash = float(p.get("cash_won_lost") or p.get("total_cash") or 0.0)
+            gross_int = int(gross) if (gross is not None and gross != "") else None
+            played_count = 18 if gross_int is not None else 0
+            tot_to_par = (gross_int - total_par) if gross_int is not None else 0
+            to_par_display = "-" if gross_int is None else ("E" if tot_to_par == 0 else (f"+{tot_to_par}" if tot_to_par > 0 else f"{tot_to_par}"))
+            thru_display = "F" if gross_int is not None else "-"
+
+            player_scorecards.append({
+                "id": pid,
+                "player_id": p.get("player_id"),
+                "name": p.get("name") or p.get("nickname") or f"Player {idx+1}",
+                "color": p.get("color") or DEFAULT_PLAYER_COLORS[idx % len(DEFAULT_PLAYER_COLORS)],
+                "default_team": "left",
+                "hcp_out": 0,
+                "hcp_in": 0,
+                "handicap_holes": [],
+                "scores": {},
+                "net_scores": {},
+                "hole_points": {},
+                "hole_cash": {},
+                "out_gross": None,
+                "in_gross": None,
+                "total_gross": gross_int,
+                "total_played": played_count,
+                "thru": played_count,
+                "thru_display": thru_display,
+                "total_to_par": tot_to_par,
+                "to_par_display": to_par_display,
+                "total_points": 0.0,
+                "total_cash": round(cash, 2),
+                "momentum": [cash],
+                "rank": 0,
+                "rank_display": "-"
+            })
+
+        sorted_leaderboard = sorted(
+            player_scorecards,
+            key=lambda x: (-x["total_cash"], x["total_gross"] if x["total_gross"] is not None else 999)
+        )
+        for rank_idx, sc in enumerate(sorted_leaderboard):
+            sc["rank"] = rank_idx + 1
+            sc["rank_display"] = str(rank_idx + 1)
+
+        leader_player = sorted_leaderboard[0] if sorted_leaderboard else None
+        return {
+            "tournament_name": tournament_name,
+            "course_id": course_id,
+            "course_name": course_name,
+            "starting_hole": 1,
+            "played_hole_order": list(range(1, 19)),
+            "game_settings": data.get("game_settings") or {},
+            "players": players,
+            "holes": data.get("holes") or DEFAULT_HOLES,
+            "course_specs": course_specs,
+            "calculated_holes": [],
+            "player_scorecards": player_scorecards,
+            "leaderboard": sorted_leaderboard,
+            "leader_player": leader_player,
+            "current_display_hole": 18,
+            "max_thru": 18,
+            "is_manual": True
+        }
 
     # Game Settings
     settings = copy.deepcopy(DEFAULT_SETTINGS)
@@ -871,6 +944,7 @@ def calculate_tournament_state(data: Dict[str, Any]) -> Dict[str, Any]:
 
         player_scorecards.append({
             "id": pid,
+            "player_id": p.get("player_id"),
             "name": p["name"],
             "color": p["color"],
             "default_team": p.get("default_team", "left"),

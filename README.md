@@ -20,6 +20,50 @@ A real-time mobile web application designed for a casual Sunday golf game with *
 
 ---
 
+## 🧮 World Handicap System (WHS) Handicap Calculation (USGA Rule 5.2a)
+
+The app tracks each player's official **World Handicap System (WHS) Handicap Index** across their past rounds using the standard USGA Rule 5.2a formula.
+
+### 1. Score Differential Formula
+
+For each completed 18-hole round played on a rated course and tee:
+
+$$\text{Score Differential} = \text{round}\left(\frac{113.0}{\text{Slope Rating}} \times (\text{Gross Score} - \text{Course Rating}), 1\right)$$
+
+* **Gross Score**: Total 18-hole raw strokes.
+* **Course Rating**: The evaluation of course difficulty for a scratch golfer (e.g. `71.5`).
+* **Slope Rating**: The relative difficulty rating for non-scratch golfers compared to a standard rating of 113 (e.g. `126`).
+
+---
+
+### 2. Rounds Selection & Stroke Adjustment Table (USGA Rule 5.2a)
+
+The system records up to the **20 most recent 18-hole rounds** played by each player. A minimum of **3 submitted scores** is required to establish an official Handicap Index.
+
+The table below determines how many of the lowest differentials are used and the adjustment applied based on the number of scores in the player's record:
+
+| Number of Scores Submitted | Number of Differentials Used | Adjustment (Strokes) | Calculation Procedure |
+| :---: | :---: | :---: | :--- |
+| **3** | Lowest 1 | -2.0 | Lowest differential minus 2.0 |
+| **4** | Lowest 1 | -1.0 | Lowest differential minus 1.0 |
+| **5** | Lowest 1 | 0 | Lowest differential |
+| **6** | Average of lowest 2 | -1.0 | Average of lowest 2 differentials minus 1.0 |
+| **7 – 8** | Average of lowest 2 | 0 | Average of lowest 2 differentials |
+| **9 – 11** | Average of lowest 3 | 0 | Average of lowest 3 differentials |
+| **12 – 14** | Average of lowest 4 | 0 | Average of lowest 4 differentials |
+| **15 – 16** | Average of lowest 5 | 0 | Average of lowest 5 differentials |
+| **17 – 18** | Average of lowest 6 | 0 | Average of lowest 6 differentials |
+| **19** | Average of lowest 7 | 0 | Average of lowest 7 differentials |
+| **20** | Average of lowest 8 | 0 *(Standard WHS)* | Average of lowest 8 differentials |
+
+> **Rounding**: The resulting average (after applying adjustment strokes) is rounded to the nearest tenth (`0.1`).
+>
+> **Highlighting in App**: In the player's **Past Rounds** history modal, the differentials currently counting toward their Handicap Index are highlighted in **green with a star badge (`★ Used`)**, while non-counting differentials remain neutral.
+>
+> **Blank Score Exemption**: In manually inserted past rounds, if a player's gross score is left blank, it is excluded from the handicap calculation (`differential = NULL`), preserving their handicap index while still recording their money won/lost.
+
+---
+
 ## 🏫 Pre-Loaded Golf Courses Database (`data/courses.json`)
 
 1. **Krungthep Kreetha Golf Course** (Bangkok)
