@@ -707,6 +707,24 @@
             </div>
           </div>
 
+          <!-- Lone Wolf Bonus (Visible in WOLF mode) -->
+          <div id="lone-wolf-bonus-box" class="p-3.5 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-2 hidden">
+            <div class="flex items-center justify-between">
+              <label for="cfg-lone-wolf-bonus" class="flex items-center gap-2 text-xs font-black text-purple-300 uppercase">
+                <span>🐺 Lone Wolf Bonus</span>
+              </label>
+              <button type="button" onclick="openInfoModal('lone_wolf_bonus')" class="text-slate-400 hover:text-amber-400 p-1" title="Info">
+                <i data-lucide="info" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] text-slate-300 font-bold">Bonus Points:</span>
+              <input id="cfg-lone-wolf-bonus" type="number" min="0" max="20" value="1" class="w-16 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1 text-center font-black text-white text-xs focus:ring-1 focus:ring-purple-500">
+              <span class="text-[10px] text-slate-400 leading-tight">Added per opponent when Lone Wolf wins</span>
+            </div>
+          </div>
+
           <!-- Birdie, Eagle, Albatross Bonuses -->
           <div class="sm:col-span-2 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
             <div class="flex items-center justify-between flex-wrap gap-1">

@@ -196,10 +196,13 @@ class RoundManager:
                 merged_settings.update(new_settings["game_settings"])
 
             settings = round_data.get("game_settings") or copy.deepcopy(DEFAULT_SETTINGS)
-            for k in ["cash_per_point", "hand_count", "turbo_multiplier", "penetrate_bonus", "birdie_point", "eagle_point", "albatross_point"]:
-                if k in merged_settings:
+            for k in ["cash_per_point", "hand_count", "turbo_multiplier", "penetrate_bonus", "lone_wolf_bonus", "birdie_point", "eagle_point", "albatross_point"]:
+                if k in merged_settings and merged_settings[k] is not None:
                     try:
-                        settings[k] = int(merged_settings[k])
+                        val = int(merged_settings[k])
+                        if k == "lone_wolf_bonus":
+                            val = max(0, val)
+                        settings[k] = val
                     except (ValueError, TypeError):
                         pass
 

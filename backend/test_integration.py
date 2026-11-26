@@ -106,18 +106,20 @@ print(f"PASS: POST /api/rounds -> round_id: {round_id}")
 r = invoke_request("GET", f"/api/round/{round_id}", headers=auth_headers)
 print("GET /api/round status:", r["status"], "json keys:", list(r["json"].keys()) if r["json"] else r["body"])
 
-# 6. POST /api/round/<id>/settings (Starting Hole 10 & WOLF & Turbo)
+# 6. POST /api/round/<id>/settings (Starting Hole 10 & WOLF & Turbo & Lone Wolf Bonus)
 r = invoke_request("POST", f"/api/round/{round_id}/settings", body={
     "starting_hole": 10,
     "game_settings": {
         "game_mode": "WOLF",
         "starting_hole": 10,
         "turbo": True,
-        "turbo_multiplier": 2
+        "turbo_multiplier": 2,
+        "lone_wolf_bonus": 2
     }
 }, headers=auth_headers)
 assert r["status"] == 200
 state = r["json"]
+assert state["game_settings"]["lone_wolf_bonus"] == 2
 assert state["starting_hole"] == 10
 assert state["played_hole_order"] == [10, 11, 12, 13, 14, 15, 16, 17, 18, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 h10 = next(h for h in state["calculated_holes"] if h["hole"] == 10)
@@ -358,7 +360,7 @@ for i in range(1, 6):
     # Custom course holes with Turbo on Hole 1 & custom Tee rating=72.0, slope=113.0
     custom_holes = [{"hole": h_idx, "par": 4, "handicap": h_idx, "is_turbo": (h_idx == 1)} for h_idx in range(1, 19)]
     invoke_request("POST", f"/api/round/{tr_id}/course", body={
-        "course_name": "Krungthep Kreetha",
+        "course_name": "Krungthep Kreetha Golf Course",
         "holes": custom_holes,
         "selected_tee": {"id": "white", "name": "White", "course_rating": 72.0, "slope_rating": 113}
     }, headers=auth_headers)
@@ -433,8 +435,12 @@ assert alice_stat["total_cash"] == round(expected_thb_sum, 2), f"Roster sum {ali
 counting_items = [h for h in hist_list if h.get("is_counting")]
 assert len(counting_items) == 1
 assert counting_items[0]["differential"] == 9.0
-assert hist_list[0]["course_name"] == "Krungthep Kreetha"
+assert hist_list[0]["course_name"] == "Krungthep Kreetha Golf Course"
 print(f"PASS: Player history & Roster cash sum match Leaderboard across all {len(hist_list)} finished rounds (THB sum={alice_stat['total_cash']})")
+
+# Clean up test rounds so repeated runs stay idempotent
+for cleanup_rid in created_test_rounds + [unfin_id]:
+    db.delete_round(cleanup_rid)
 
 # 28. Verify Admin Access Control & 403 Forbidden for Non-Admin
 r_unauth_admin = invoke_request("GET", "/api/admin/accounts", headers=auth_headers)

@@ -1882,6 +1882,12 @@ function renderSettingsForms() {
   const penBonusInp = document.getElementById('cfg-penetrate-bonus');
   if (penBonusInp) penBonusInp.value = settings.penetrate_bonus || 1;
 
+  // Lone Wolf Bonus
+  const lwBonusInp = document.getElementById('cfg-lone-wolf-bonus');
+  if (lwBonusInp) {
+    lwBonusInp.value = (settings.lone_wolf_bonus !== undefined && settings.lone_wolf_bonus !== null) ? settings.lone_wolf_bonus : 1;
+  }
+
   // Birdie, Eagle, Albatross Bonuses
   const birdieInp = document.getElementById('cfg-birdie-point');
   if (birdieInp) birdieInp.value = settings.birdie_point || 2;
@@ -1943,6 +1949,7 @@ function setGameModeUI(mode) {
   const defTeamsBox = document.getElementById('default-teams-box');
   const handCountBox = document.getElementById('hand-count-box');
   const penBox = document.getElementById('penetrate-box');
+  const lwBonusBox = document.getElementById('lone-wolf-bonus-box');
 
   const inactiveBtnClass = "py-2.5 px-2 rounded-xl font-black text-xs transition border flex items-center justify-center gap-1 bg-slate-900 text-slate-400 border-slate-700 hover:text-white";
 
@@ -1985,6 +1992,11 @@ function setGameModeUI(mode) {
   if (penBox) {
     if (isFFA) penBox.classList.add('hidden');
     else penBox.classList.remove('hidden');
+  }
+
+  if (lwBonusBox) {
+    if (isWolf) lwBonusBox.classList.remove('hidden');
+    else lwBonusBox.classList.add('hidden');
   }
 }
 
@@ -2393,6 +2405,8 @@ async function saveGameSettings() {
   const turboHcp = document.getElementById('cfg-turbo-handicap')?.checked || false;
   const penetrate = document.getElementById('cfg-penetrate-enabled')?.checked || false;
   const penetrateBonus = parseInt(document.getElementById('cfg-penetrate-bonus')?.value) || 1;
+  const rawLwBonus = parseInt(document.getElementById('cfg-lone-wolf-bonus')?.value, 10);
+  const loneWolfBonus = Number.isNaN(rawLwBonus) ? 1 : Math.max(0, rawLwBonus);
   const birdieBonus = parseInt(document.getElementById('cfg-birdie-point')?.value) || 2;
   const eagleBonus = parseInt(document.getElementById('cfg-eagle-point')?.value) || 3;
   const albatrossBonus = parseInt(document.getElementById('cfg-albatross-point')?.value) || 4;
@@ -2417,6 +2431,7 @@ async function saveGameSettings() {
       turbo_handicap: turboHcp,
       penetrate: penetrate,
       penetrate_bonus: penetrateBonus,
+      lone_wolf_bonus: loneWolfBonus,
       birdie_point: birdieBonus,
       eagle_point: eagleBonus,
       albatross_point: albatrossBonus,
@@ -2947,6 +2962,9 @@ function openInfoModal(type) {
     desc.textContent = isThai
       ? "ชวน (Chuan): หากทีมใดชนะทุกคู่มือในการเปรียบเทียบ (All Hands Won) จะได้รับแต้มโบนัสชวนเพิ่มเติมตามที่กำหนด"
       : "Penetrate means all hands are won by one side. If that's the case, the Penetrate Bonus will be added to the points won.";
+  } else if (type === 'lone_wolf_bonus') {
+    title.textContent = "🐺 Lone Wolf Bonus Info";
+    desc.textContent = "Applied only when a player goes Lone Wolf AND wins the hole. The bonus points are added per non-Wolf opponent at the very end of the hole calculation (not multiplied by Birdie/Eagle/Albatross or Turbo multipliers).";
   }
 
   modal.classList.remove('hidden');

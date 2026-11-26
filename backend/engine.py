@@ -77,6 +77,7 @@ DEFAULT_SETTINGS = {
     "turbo_handicap": False,       # Allow handicap on turbo holes (default unchecked)
     "penetrate": True,             # Penetrate / Chuan bonus enabled (default checked)
     "penetrate_bonus": 1,          # Additional point when all hands are won
+    "lone_wolf_bonus": 1,          # Additional point per opponent when Lone Wolf wins
     "birdie_point": 2,             # Points for birdie
     "eagle_point": 3,              # Points for eagle
     "albatross_point": 4           # Points for albatross
@@ -302,6 +303,11 @@ def calculate_hole_points(
     turbo_mult = int(settings.get("turbo_multiplier", 2) or 2)
     penetrate_enabled = bool(settings.get("penetrate", False))
     penetrate_bonus = int(settings.get("penetrate_bonus", 1) or 1)
+    raw_lwb = settings.get("lone_wolf_bonus")
+    try:
+        lone_wolf_bonus = max(0, int(raw_lwb)) if raw_lwb is not None else 1
+    except (ValueError, TypeError):
+        lone_wolf_bonus = 1
     game_mode = str(settings.get("game_mode", "NORMAL")).upper()
     setting_hand_count = int(settings.get("hand_count", 2) or 2)
 
@@ -348,6 +354,7 @@ def calculate_hole_points(
             "hand_won_count": 0,
             "is_turbo": is_turbo,
             "is_penetrate": False,
+            "is_lone_wolf_bonus": False,
             "point_deltas": {p: 0.0 for p in players_dict},
             "team_a_sorted": team_a_data,
             "team_b_sorted": team_b_data
@@ -428,7 +435,13 @@ def calculate_hole_points(
     n_b = len(team_b_data)
 
     # WOLF MODE: LONE WOLF SCENARIO (hand_count == 1 and 1 player in Team A)
+    is_lone_wolf_bonus = False
     if game_mode == "WOLF" and n_a == 1:
+        # Apply Lone Wolf Bonus at the end ONLY when Lone Wolf wins (not multiplied by birdie+ or turbo)
+        if won_point > 0 and lone_wolf_bonus > 0:
+            won_point += lone_wolf_bonus
+            is_lone_wolf_bonus = True
+
         # Team A is lone wolf. Total points lost/gain = number of players in Team B * won_point
         for p in team_b_data:
             point_deltas[p["id"]] = -float(won_point)
@@ -457,6 +470,7 @@ def calculate_hole_points(
         "hand_details": hand_details,
         "is_turbo": is_turbo,
         "is_penetrate": is_penetrate,
+        "is_lone_wolf_bonus": is_lone_wolf_bonus,
         "point_deltas": point_deltas,
         "team_a_sorted": team_a_data,
         "team_b_sorted": team_b_data

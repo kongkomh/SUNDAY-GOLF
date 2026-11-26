@@ -143,6 +143,7 @@ class TestSundayGolfEngine(unittest.TestCase):
         self.assertEqual(p3["total_points"], -3.0)
 
     def test_wolf_lone_wolf_scoring(self):
+        # Birdie win (2 pts) + default Lone Wolf Bonus (1 pt) = 3 pts per opponent -> Wolf +9, Losers -3 each
         game_data = {
             "game_settings": {
                 "game_mode": "WOLF",
@@ -166,14 +167,75 @@ class TestSundayGolfEngine(unittest.TestCase):
         p3 = next(p for p in state["player_scorecards"] if p["id"] == "p3")
         p4 = next(p for p in state["player_scorecards"] if p["id"] == "p4")
 
-        self.assertEqual(p1["total_points"], 6.0)
-        self.assertEqual(p1["total_cash"], 600.0)
-        self.assertEqual(p2["total_points"], -2.0)
-        self.assertEqual(p2["total_cash"], -200.0)
-        self.assertEqual(p3["total_points"], -2.0)
-        self.assertEqual(p3["total_cash"], -200.0)
-        self.assertEqual(p4["total_points"], -2.0)
-        self.assertEqual(p4["total_cash"], -200.0)
+        self.assertEqual(p1["total_points"], 9.0)
+        self.assertEqual(p1["total_cash"], 900.0)
+        self.assertEqual(p2["total_points"], -3.0)
+        self.assertEqual(p2["total_cash"], -300.0)
+        self.assertEqual(p3["total_points"], -3.0)
+        self.assertEqual(p3["total_cash"], -300.0)
+        self.assertEqual(p4["total_points"], -3.0)
+        self.assertEqual(p4["total_cash"], -300.0)
+
+    def test_lone_wolf_bonus_win_loss_tie_turbo_and_partner(self):
+        # 1) Par win (1 pt) + Lone Wolf Bonus (1 pt) -> Wolf +6, Losers -2 each
+        par_win = calculate_tournament_state({
+            "game_settings": {"game_mode": "WOLF", "hand_count": 1, "cash_per_point": 100, "lone_wolf_bonus": 1, "turbo": False},
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {"1": {"team_a": ["p1"], "team_b": ["p2", "p3", "p4"], "scores": {"p1": 4, "p2": 5, "p3": 5, "p4": 5}}}
+        })
+        sc_win = {p["id"]: p["total_points"] for p in par_win["player_scorecards"]}
+        self.assertEqual(sc_win, {"p1": 6.0, "p2": -2.0, "p3": -2.0, "p4": -2.0})
+
+        # 2) Lone Wolf loses (Par 4 by opponent vs Bogey 5 by Wolf) -> Bonus NOT applied -> Wolf -3, Winners +1 each
+        wolf_loss = calculate_tournament_state({
+            "game_settings": {"game_mode": "WOLF", "hand_count": 1, "cash_per_point": 100, "lone_wolf_bonus": 1, "turbo": False},
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {"1": {"team_a": ["p1"], "team_b": ["p2", "p3", "p4"], "scores": {"p1": 5, "p2": 4, "p3": 5, "p4": 5}}}
+        })
+        sc_loss = {p["id"]: p["total_points"] for p in wolf_loss["player_scorecards"]}
+        self.assertEqual(sc_loss, {"p1": -3.0, "p2": 1.0, "p3": 1.0, "p4": 1.0})
+
+        # 3) Lone Wolf ties -> Bonus NOT applied -> all 0
+        wolf_tie = calculate_tournament_state({
+            "game_settings": {"game_mode": "WOLF", "hand_count": 1, "cash_per_point": 100, "lone_wolf_bonus": 2, "turbo": False},
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {"1": {"team_a": ["p1"], "team_b": ["p2", "p3", "p4"], "scores": {"p1": 4, "p2": 4, "p3": 5, "p4": 5}}}
+        })
+        sc_tie = {p["id"]: p["total_points"] for p in wolf_tie["player_scorecards"]}
+        self.assertEqual(sc_tie, {"p1": 0.0, "p2": 0.0, "p3": 0.0, "p4": 0.0})
+
+        # 4) Turbo Hole 9 (x4) + Birdie (2 pts) + Lone Wolf Bonus (1 pt): (2 * 4) + 1 = 9 per opponent -> Wolf +27, Losers -9 each
+        turbo_win = calculate_tournament_state({
+            "game_settings": {"game_mode": "WOLF", "hand_count": 1, "cash_per_point": 100, "birdie_point": 2, "turbo": True, "turbo_multiplier": 4, "lone_wolf_bonus": 1},
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {"9": {"team_a": ["p1"], "team_b": ["p2", "p3", "p4"], "scores": {"p1": 3, "p2": 4, "p3": 5, "p4": 5}}}
+        })
+        sc_turbo = {p["id"]: p["total_points"] for p in turbo_win["player_scorecards"]}
+        self.assertEqual(sc_turbo, {"p1": 27.0, "p2": -9.0, "p3": -9.0, "p4": -9.0})
+
+        # 5) Wolf with Partner (2v2) wins -> Lone Wolf Bonus NOT applied -> +1 / -1
+        partner_win = calculate_tournament_state({
+            "game_settings": {"game_mode": "WOLF", "hand_count": 1, "cash_per_point": 100, "lone_wolf_bonus": 3, "turbo": False},
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {"1": {"team_a": ["p1", "p2"], "team_b": ["p3", "p4"], "scores": {"p1": 4, "p2": 5, "p3": 5, "p4": 5}}}
+        })
+        sc_partner = {p["id"]: p["total_points"] for p in partner_win["player_scorecards"]}
+        self.assertEqual(sc_partner, {"p1": 1.0, "p2": 1.0, "p3": -1.0, "p4": -1.0})
+
+        # 6) Lone Wolf Bonus set to 0 -> Par win gives +3 / -1
+        zero_bonus = calculate_tournament_state({
+            "game_settings": {"game_mode": "WOLF", "hand_count": 1, "cash_per_point": 100, "lone_wolf_bonus": 0, "turbo": False},
+            "players": self.players,
+            "holes": self.holes,
+            "scores": {"1": {"team_a": ["p1"], "team_b": ["p2", "p3", "p4"], "scores": {"p1": 4, "p2": 5, "p3": 5, "p4": 5}}}
+        })
+        sc_zero = {p["id"]: p["total_points"] for p in zero_bonus["player_scorecards"]}
+        self.assertEqual(sc_zero, {"p1": 3.0, "p2": -1.0, "p3": -1.0, "p4": -1.0})
 
     def test_underpar_raw_tiebreaker_case1(self):
         # Case 1: Hole 5 (Par 4). Player p1 has handicap on H5 -> raw 4 (Par) nets to 3.
